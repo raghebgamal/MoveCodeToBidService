@@ -801,7 +801,7 @@ namespace Nafis.Services.Implementation
         /// </summary>
         /// <param name="model"></param>
         /// <exception cref="NotImplementedException"></exception>
-        private void ValidateBidFinancialValueWithBidType(AddBidModelNew model)
+        public void ValidateBidFinancialValueWithBidType(AddBidModelNew model)
         {
             if (model.BidTypeId != (int)BidTypes.Public && model.BidTypeId != (int)BidTypes.Private)
             {
@@ -810,14 +810,14 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private static bool IsRequiredDataForNotSaveAsDraftAdded(AddBidModelNew model)
+        public static bool IsRequiredDataForNotSaveAsDraftAdded(AddBidModelNew model)
         {
             var isAllRequiredDatesAdded = model.LastDateInReceivingEnquiries.HasValue &&
                  model.LastDateInOffersSubmission.HasValue && model.OffersOpeningDate.HasValue;
             return !model.IsDraft && ((!isAllRequiredDatesAdded) || (model.RegionsId is null || model.RegionsId.Count == 0));
         }
 
-        private OperationResult<bool> AdjustRequestBidAddressesToTheEndOfTheDay<T>(T model) where T : BidAddressesModelRequest
+        public OperationResult<bool> AdjustRequestBidAddressesToTheEndOfTheDay<T>(T model) where T : BidAddressesModelRequest
         {
             if (model is null)
                 return OperationResult<bool>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.INVALID_INPUT);
@@ -830,7 +830,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<bool>.Success(true);
         }
 
-        private OperationResult<AddBidResponse> ValidateBidDates(AddBidModelNew model, Bid bid, ReadOnlyAppGeneralSettings generalSettings)
+        public OperationResult<AddBidResponse> ValidateBidDates(AddBidModelNew model, Bid bid, ReadOnlyAppGeneralSettings generalSettings)
         {
             if (bid is not null && checkLastReceivingEnqiryDate(model, bid))
                 return OperationResult<AddBidResponse>.Fail(HttpErrorCode.InvalidInput, BidErrorCodes.LAST_DATE_IN_RECEIVING_ENQUIRIES_MUST_NOT_BE_BEFORE_TODAY_DATE);
@@ -848,7 +848,7 @@ namespace Nafis.Services.Implementation
                 return OperationResult<AddBidResponse>.Success(null);
         }
 
-        private void UpdateSiteMapLastModificationDateIfSpecificDataChanged(Bid bid, AddBidModelNew requestModel)
+        public void UpdateSiteMapLastModificationDateIfSpecificDataChanged(Bid bid, AddBidModelNew requestModel)
         {
             if (bid is null || requestModel is null)
                 return;
@@ -859,7 +859,7 @@ namespace Nafis.Services.Implementation
                 bid.SiteMapDataLastModificationDate = _dateTimeZone.CurrentDate;
         }
 
-        private OperationResult<bool> CalculateAndUpdateBidPrices(double association_Fees, ReadOnlyAppGeneralSettings settings, Bid bid)
+        public OperationResult<bool> CalculateAndUpdateBidPrices(double association_Fees, ReadOnlyAppGeneralSettings settings, Bid bid)
         {
             if (bid is null || settings is null)
                 return OperationResult<bool>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.NOT_FOUND);
@@ -882,14 +882,14 @@ namespace Nafis.Services.Implementation
             return OperationResult<bool>.Success(true);
         }
 
-        private async Task<bool> IsTermsBookBoughtBeforeInBid(long bidId)
+        public async Task<bool> IsTermsBookBoughtBeforeInBid(long bidId)
         {
             var isBoughtBefore = await _providerBidRepository.Any(x => x.BidId == bidId && x.IsPaymentConfirmed);
             return isBoughtBefore;
         }
 
 
-        private async Task<bool> CheckIfWeCanUpdatePriceOfBid(ApplicationUser usr, Bid bid)
+        public async Task<bool> CheckIfWeCanUpdatePriceOfBid(ApplicationUser usr, Bid bid)
         {
 
             if (bid.BidStatusId == (int)TenderStatus.Draft)
@@ -911,14 +911,14 @@ namespace Nafis.Services.Implementation
 
 
 
-        private bool checkLastReceivingEnqiryDate(AddBidModelNew model, Bid bid)
+        public bool checkLastReceivingEnqiryDate(AddBidModelNew model, Bid bid)
         {
             return bid.BidAddressesTime is not null && bid.BidAddressesTime.LastDateInReceivingEnquiries.HasValue &&
                 bid.BidAddressesTime.LastDateInReceivingEnquiries.Value.Date != model.LastDateInReceivingEnquiries.Value.Date &&
                                     model.LastDateInReceivingEnquiries < _dateTimeZone.CurrentDate.Date;
         }
 
-        private async Task<OperationResult<bool>> SaveBidDonor(BidDonorRequest model, long bidId, string UserId)
+        public async Task<OperationResult<bool>> SaveBidDonor(BidDonorRequest model, long bidId, string UserId)
         {
             if (model is null)
                 return OperationResult<bool>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.INVALID_INPUT);
@@ -1054,7 +1054,7 @@ namespace Nafis.Services.Implementation
             await _BidDonorRepository.Update(bidDonor);
         }
 
-        private async Task SendNewBidEmailToSuperAdmins(Bid bid)
+        public async Task SendNewBidEmailToSuperAdmins(Bid bid)
         {
             if (bid is null)
                 throw new ArgumentNullException("bid is null");
@@ -1094,7 +1094,7 @@ namespace Nafis.Services.Implementation
             };
             await _emailService.SendToMultipleReceiversAsync(emailRequest);
         }
-        private async Task SendNewDraftBidEmailToSuperAdmins(Bid bid, string entityName)
+        public async Task SendNewDraftBidEmailToSuperAdmins(Bid bid, string entityName)
         {
             if (bid is null)
                 throw new ArgumentNullException("bid is null");
@@ -1130,7 +1130,7 @@ namespace Nafis.Services.Implementation
             };
             await _emailService.SendToMultipleReceiversAsync(emailRequest);
         }
-        private async Task<string> GenerateBidRefNumber(long bidId, string firstPart_Ref_Number)
+        public async Task<string> GenerateBidRefNumber(long bidId, string firstPart_Ref_Number)
         {
             string randomNumber = _randomGeneratorService.RandomNumber(1000, 9999);// + _randomGeneratorService.RandomString(3, true);
             string ref_Number = firstPart_Ref_Number + randomNumber;
@@ -1147,13 +1147,13 @@ namespace Nafis.Services.Implementation
             return ref_Number;
         }
 
-        private static bool ValidateBidInvitationAttachmentsNew(AddBidModelNew model)
+        public static bool ValidateBidInvitationAttachmentsNew(AddBidModelNew model)
         {
             return model.BidVisibility == BidTypes.Habilitation &&
                 (model.IsInvitationNeedAttachments.HasValue ? model.IsInvitationNeedAttachments.Value : false)
                 && (model.BidInvitationsAttachments is null || model.BidInvitationsAttachments.Count == 0);
         }
-        private void AddInvitationAttachmentsNew(AddBidModelNew model, ApplicationUser usr, long bidId)
+        public void AddInvitationAttachmentsNew(AddBidModelNew model, ApplicationUser usr, long bidId)
         {
             if (checkIfWeNeedAddAttachmentNew(model))
             {
@@ -1170,7 +1170,7 @@ namespace Nafis.Services.Implementation
 
             };
         }
-        private static bool checkIfWeNeedAddAttachmentNew(AddBidModelNew model)
+        public static bool checkIfWeNeedAddAttachmentNew(AddBidModelNew model)
         {
             return model.BidVisibility == BidTypes.Habilitation &&
                 model.IsInvitationNeedAttachments == true && model.BidInvitationsAttachments != null
@@ -1179,7 +1179,7 @@ namespace Nafis.Services.Implementation
 
 
 
-        private async Task<(List<NotificationReceiverUser> ActualReceivers, List<NotificationReceiverUser> RealtimeReceivers)> GetUsersOfBidCreatorOrganizationToRecieveBidNotifications(Bid bid)
+        public async Task<(List<NotificationReceiverUser> ActualReceivers, List<NotificationReceiverUser> RealtimeReceivers)> GetUsersOfBidCreatorOrganizationToRecieveBidNotifications(Bid bid)
         {
             string[] claims = null;
             long entityId = 0;
@@ -1263,7 +1263,7 @@ namespace Nafis.Services.Implementation
         }
 
 
-        private async Task ValidateInvitationAttachmentsAndUpdateThemNew(AddBidModelNew model, ApplicationUser usr)
+        public async Task ValidateInvitationAttachmentsAndUpdateThemNew(AddBidModelNew model, ApplicationUser usr)
         {
             if (!(model.IsInvitationNeedAttachments.HasValue ? model.IsInvitationNeedAttachments.Value : false))
             {
@@ -1280,7 +1280,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private static bool ValidateIfWeNeedToUpdateInvitationAttachmentsNew(AddBidModelNew model)
+        public static bool ValidateIfWeNeedToUpdateInvitationAttachmentsNew(AddBidModelNew model)
         {
             return model.IsInvitationNeedAttachments.HasValue ? model.IsInvitationNeedAttachments.Value : false
                 && model.BidInvitationsAttachments != null && model.BidInvitationsAttachments.Count > 0;
@@ -1409,7 +1409,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task UpdateInvitationRequiredDocumentsEndDate(AddBidAddressesTimesModel model, Bid bid)
+        public async Task UpdateInvitationRequiredDocumentsEndDate(AddBidAddressesTimesModel model, Bid bid)
         {
             if (bid.BidTypeId == (int)BidTypes.Habilitation && model.InvitationDocumentsApplyingEndDate != null)
             {
@@ -1419,7 +1419,7 @@ namespace Nafis.Services.Implementation
 
             }
         }
-        private async Task UpdateInvitationRequiredDocumentsEndDateNew(DateTime? InvitationDocumentsApplyingEndDate, Bid bid)
+        public async Task UpdateInvitationRequiredDocumentsEndDateNew(DateTime? InvitationDocumentsApplyingEndDate, Bid bid)
         {
             if (bid.BidTypeId == (int)BidTypes.Habilitation && InvitationDocumentsApplyingEndDate != null)
             {
@@ -1689,7 +1689,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<OperationResult<bool>> AddSystemReviewToBidByCurrentUser(long bidId, SystemRequestStatuses status)
+        public async Task<OperationResult<bool>> AddSystemReviewToBidByCurrentUser(long bidId, SystemRequestStatuses status)
             => await _helperService.AddReviewedSystemRequestLog(
                 new AddReviewedSystemRequestLogRequest
                 {
@@ -1700,13 +1700,13 @@ namespace Nafis.Services.Implementation
 
                 }, _currentUserService.CurrentUser);
 
-        private static bool CheckIfHasSupervisor(Bid bid, OperationResult<List<GetDonorSupervisingServiceClaimsResponse>> supervisingDonorClaims)
+        public static bool CheckIfHasSupervisor(Bid bid, OperationResult<List<GetDonorSupervisingServiceClaimsResponse>> supervisingDonorClaims)
         {
             return bid.IsFunded && bid.BidStatusId != (int)TenderStatus.Draft &&
                 supervisingDonorClaims.Data.Any(x => x.ClaimType == SupervisingServiceClaimCodes.clm_3057 && x.IsChecked);
         }
 
-        private async Task SendPublishBidRequestEmailAndNotification(ApplicationUser usr, Bid bid, TenderStatus oldStatusOfBid)
+        public async Task SendPublishBidRequestEmailAndNotification(ApplicationUser usr, Bid bid, TenderStatus oldStatusOfBid)
         {
             var emailModel = new PublishBidRequestEmail()
             {
@@ -1747,17 +1747,17 @@ namespace Nafis.Services.Implementation
             await _notificationService.SendRealTimeNotificationToUsersAsync(notificationObj, adminUsers.Select(x => x.ActualRecieverId).ToList(), (int)SystemEventsTypes.PublishBidRequestNotification);
         }
 
-        private static bool CheckIfWeShouldSendPublishBidRequestToAdmins(Bid bid, TenderStatus oldStatusOfBid)
+        public static bool CheckIfWeShouldSendPublishBidRequestToAdmins(Bid bid, TenderStatus oldStatusOfBid)
         {
             return oldStatusOfBid == TenderStatus.Draft && (TenderStatus)bid.BidStatusId == TenderStatus.Reviewing && bid.BidTypeId != (int)BidTypes.Private;
         }
 
-        private static bool CheckIfAdminCanPublishBid(ApplicationUser usr, Bid bid)
+        public static bool CheckIfAdminCanPublishBid(ApplicationUser usr, Bid bid)
         {
             return (usr.UserType == UserType.SuperAdmin || usr.UserType == UserType.Admin) && bid.BidTypeId != (int)BidTypes.Private;
         }
 
-        private async Task ApplyClosedBidsLogicIfAdminTryToPublish(AddBidAttachmentRequest model, ApplicationUser usr, Bid bid, TenderStatus oldStatusOfBid)
+        public async Task ApplyClosedBidsLogicIfAdminTryToPublish(AddBidAttachmentRequest model, ApplicationUser usr, Bid bid, TenderStatus oldStatusOfBid)
         {
             bid.BidStatusId = model.BidStatusId != null && model.BidStatusId > 0 ? Convert.ToInt32(model.BidStatusId) : (int)TenderStatus.Open;
             if (CheckIfWasDraftAndBecomeOpen(bid, oldStatusOfBid))
@@ -1800,7 +1800,7 @@ namespace Nafis.Services.Implementation
             await _bidRepository.Update(bid);
 
         }
-        private async Task ApplyClosedBidsLogic(AddBidAttachmentRequest model, ApplicationUser usr, Bid bid, OperationResult<List<GetDonorSupervisingServiceClaimsResponse>> supervisingDonorClaims)
+        public async Task ApplyClosedBidsLogic(AddBidAttachmentRequest model, ApplicationUser usr, Bid bid, OperationResult<List<GetDonorSupervisingServiceClaimsResponse>> supervisingDonorClaims)
         {
 
             bid.BidStatusId = model.BidStatusId != null && model.BidStatusId > 0 ? Convert.ToInt32(model.BidStatusId) : (int)TenderStatus.Reviewing;
@@ -1824,7 +1824,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task SendBidToSponsorDonorToBeConfirmed(ApplicationUser usr, Bid bid, BidDonor bidDonor)
+        public async Task SendBidToSponsorDonorToBeConfirmed(ApplicationUser usr, Bid bid, BidDonor bidDonor)
         {
             bid.BidStatusId = (int)TenderStatus.Pending;
 
@@ -1895,7 +1895,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task RejectPublishBid(string notes, ApplicationUser user, Bid bid, bool? isApplyOfferWithSubscriptionMandatory)
+        public async Task RejectPublishBid(string notes, ApplicationUser user, Bid bid, bool? isApplyOfferWithSubscriptionMandatory)
         {
             bid.BidStatusId = (int)TenderStatus.Draft;
             bid.IsApplyOfferWithSubscriptionMandatory = isApplyOfferWithSubscriptionMandatory;
@@ -1917,7 +1917,7 @@ namespace Nafis.Services.Implementation
             SendAdminRejectBidNotification(bid);
         }
 
-        private async Task SendAdminRejectedBidEmail(string notes, Bid bid)
+        public async Task SendAdminRejectedBidEmail(string notes, Bid bid)
         {
             var contactUs = await _appGeneralSettingService.GetContactUsInfoAsync();
             var emailModel = new RejectBidByAdminEmail()
@@ -1952,7 +1952,7 @@ namespace Nafis.Services.Implementation
                 });
         }
 
-        private void SendAdminRejectBidNotification(Bid bid)
+        public void SendAdminRejectBidNotification(Bid bid)
         {
             var notificationModel = new NotificationModel
             {
@@ -1983,7 +1983,7 @@ namespace Nafis.Services.Implementation
             _notifyInBackgroundService.SendNotificationInBackground(notifyByNotification);
         }
 
-        private async Task AcceptPublishBid(ApplicationUser user, Bid bid, bool? IsSubscriptionMandatory)
+        public async Task AcceptPublishBid(ApplicationUser user, Bid bid, bool? IsSubscriptionMandatory)
         {
             bid.BidStatusId = (int)TenderStatus.Open;
 
@@ -2010,7 +2010,7 @@ namespace Nafis.Services.Implementation
             await ApplyDefaultFlowOfApproveBid(user, bid);
         }
 
-        private OperationResult<AddBidResponse> ValidateBidDatesWhileApproving(Bid bid, ReadOnlyAppGeneralSettings generalSettings)
+        public OperationResult<AddBidResponse> ValidateBidDatesWhileApproving(Bid bid, ReadOnlyAppGeneralSettings generalSettings)
         {
             if (bid is not null && bid.BidAddressesTime is not null && bid.BidAddressesTime.LastDateInReceivingEnquiries.HasValue &&
                 bid.BidAddressesTime.LastDateInReceivingEnquiries.Value.Date < _dateTimeZone.CurrentDate.Date)
@@ -2028,7 +2028,7 @@ namespace Nafis.Services.Implementation
             else
                 return OperationResult<AddBidResponse>.Success(null);
         }
-        private async Task ApplyDefaultFlowOfApproveBid(ApplicationUser user, Bid bid)
+        public async Task ApplyDefaultFlowOfApproveBid(ApplicationUser user, Bid bid)
         {
             await DoBusinessAfterPublishingBid(bid, _currentUserService.CurrentUser);
 
@@ -2060,7 +2060,7 @@ namespace Nafis.Services.Implementation
             await InviteProvidersWithSameCommercialSectors(bid.Id, true);
         }
 
-        private async Task ApplyPrivateBidLogicWithNoSponsor(Bid bid)
+        public async Task ApplyPrivateBidLogicWithNoSponsor(Bid bid)
         {
             var entityName = bid.EntityType == UserType.Association ? bid.Association?.Association_Name : bid.Donor?.DonorName;
 
@@ -2122,12 +2122,12 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private static bool CheckIfWeCanPublishBidThatHasSponsor(BidDonor bidDonor, BidSupervisingData supervisingData)
+        public static bool CheckIfWeCanPublishBidThatHasSponsor(BidDonor bidDonor, BidSupervisingData supervisingData)
         {
             return bidDonor is not null && bidDonor.DonorResponse == DonorResponse.Accept && supervisingData is not null;
         }
 
-        private async Task SaveRFPAsPdf(Bid bid)
+        public async Task SaveRFPAsPdf(Bid bid)
         {
 
             if (!string.IsNullOrEmpty(bid.Tender_Brochure_Policies_Url))
@@ -2149,7 +2149,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<List<BidAttachment>> SaveBidAttachments(AddBidAttachmentRequest model, Bid bid)
+        public async Task<List<BidAttachment>> SaveBidAttachments(AddBidAttachmentRequest model, Bid bid)
         {
             //Delete Attachments
             var existingAttachments_ContactList = await _bidAttachmentRepository.Find(x => x.BidId == model.BidId).ToListAsync();
@@ -2177,7 +2177,7 @@ namespace Nafis.Services.Implementation
             return bidAttachmentsToSave;
         }
 
-        private async Task<(bool IsSuceeded, string ErrorMessage, string LogRef, long AllCount, long AllNotFreeSubscriptionCount)> SendEmailToCompaniesInBidIndustry(Bid bid, string entityName, bool isAutomatically)
+        public async Task<(bool IsSuceeded, string ErrorMessage, string LogRef, long AllCount, long AllNotFreeSubscriptionCount)> SendEmailToCompaniesInBidIndustry(Bid bid, string entityName, bool isAutomatically)
         {
             using var scope = _serviceScopeFactory.CreateScope();
             var helperService = scope.ServiceProvider.GetRequiredService<IHelperService>();
@@ -2303,7 +2303,7 @@ namespace Nafis.Services.Implementation
 
             return (true, string.Empty, string.Empty, countOfAllEntitiesWillBeSent, countOfNonFreeSubscriptionEntitiesWillBeSent);
         }
-        private static async Task<List<GetRecieverEmailForEntitiesInSystemDto>> GetFreelancersWithSameWorkingSectors(ICrossCuttingRepository<Freelancer, long> freelancerRepo, Bid bid)
+        public static async Task<List<GetRecieverEmailForEntitiesInSystemDto>> GetFreelancersWithSameWorkingSectors(ICrossCuttingRepository<Freelancer, long> freelancerRepo, Bid bid)
         {
             var bidIndustries = bid.GetBidWorkingSectors().Select(x => x.ParentId);
 
@@ -2325,7 +2325,7 @@ namespace Nafis.Services.Implementation
         }
 
 
-        private async Task<OperationResult<bool>> SendSMSForProvidersWithSameCommercialSectors(List<string> recipients, string message, SystemEventsTypes systemEventsType, UserType userType, bool isCampaign, ISMSService sMSService)
+        public async Task<OperationResult<bool>> SendSMSForProvidersWithSameCommercialSectors(List<string> recipients, string message, SystemEventsTypes systemEventsType, UserType userType, bool isCampaign, ISMSService sMSService)
         {
             var sendingSMSResponse = await sMSService.SendBulkAsync(new SendingSMSRequest
             {
@@ -2341,7 +2341,7 @@ namespace Nafis.Services.Implementation
                 : OperationResult<bool>.Success(true);
         }
 
-        private async Task SendNotificationsOfBidAdded(ApplicationUser usr, Bid bid, string entityName)
+        public async Task SendNotificationsOfBidAdded(ApplicationUser usr, Bid bid, string entityName)
         {
             using var scope = _serviceScopeFactory.CreateScope();
 
@@ -2943,7 +2943,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<OperationResult<ReadOnlyBidAttachmentRequest>> GetBidAttachmentNew(Bid bid,ApplicationUser usr)
+        public async Task<OperationResult<ReadOnlyBidAttachmentRequest>> GetBidAttachmentNew(Bid bid,ApplicationUser usr)
         {
           
             var bidAttachment = await _bidAttachmentRepository.FindAsync(x => x.BidId == bid.Id, false);
@@ -3153,7 +3153,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<ReadOnlyBidMainDataModel> MapBasicDataForBidMainData(Bid bid)
+        public async Task<ReadOnlyBidMainDataModel> MapBasicDataForBidMainData(Bid bid)
         {
             var model = _mapper.Map<ReadOnlyBidMainDataModel>(bid);
 
@@ -3181,7 +3181,7 @@ namespace Nafis.Services.Implementation
             return model;
         }
 
-        private async Task<OperationResult<ReadOnlyBidMainDataModel>> MapPublicMainData(long id)
+        public async Task<OperationResult<ReadOnlyBidMainDataModel>> MapPublicMainData(long id)
         {
             var bid = await GetBidWithRelatedEntitiesByIdAsync(id);
 
@@ -3241,7 +3241,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<ReadOnlyBidMainDataModel>.Success(model);
         }
 
-        private static bool CheckIfBidIsEditable(Bid model, ApplicationUser user)
+        public static bool CheckIfBidIsEditable(Bid model, ApplicationUser user)
         {
             bool ISEditable = false;
             if (user is not null)
@@ -3259,7 +3259,7 @@ namespace Nafis.Services.Implementation
             //    && (user.UserType != UserType.Association || model.BidStatusId == (int)TenderStatus.Draft || model.BidStatusId == (int)TenderStatus.Rejected);
         }
 
-        private async Task FillSupervisingInfo(Bid bid, ReadOnlyBidMainDataModel model)
+        public async Task FillSupervisingInfo(Bid bid, ReadOnlyBidMainDataModel model)
         {
             if (bid.EntityType == UserType.Donor)
             {
@@ -3277,7 +3277,7 @@ namespace Nafis.Services.Implementation
                 model.SupervisorName = model.DonorRequest?.NewDonorName;
         }
 
-        private async Task FillBidDonorInfo(Bid bid, ReadOnlyBidMainDataModel model)
+        public async Task FillBidDonorInfo(Bid bid, ReadOnlyBidMainDataModel model)
         {
             if (bid.IsFunded)
             {
@@ -3885,7 +3885,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<OperationResult<ReadOnlyGetBidPriceModel>> VerifyCommercialRecordIfAutomatedRegistration(ApplicationUser usr, long? CompanyId)
+        public async Task<OperationResult<ReadOnlyGetBidPriceModel>> VerifyCommercialRecordIfAutomatedRegistration(ApplicationUser usr, long? CompanyId)
         {
             var integrativeService = await _integrativeServicesRepository.FindOneAsync(x => true);
             if (integrativeService is not null && integrativeService.AutomatedProviderRegistration)
@@ -4165,7 +4165,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<string> GenerateTransactioNumber()
+        public async Task<string> GenerateTransactioNumber()
         {
             string nextNumber = "000001";
             string randomNumber = _invoiceService.GenerateBaseInvoiceNumber(InvoiceType.BuyTenderDocsInvoice);
@@ -4204,7 +4204,7 @@ namespace Nafis.Services.Implementation
             return randomNumber;
         }
 
-        private async Task<OperationResult<GetCompaniesToBuyTermsBookResponse>> CanCompanyBuyTermsBook(Bid bid, long? companyId)
+        public async Task<OperationResult<GetCompaniesToBuyTermsBookResponse>> CanCompanyBuyTermsBook(Bid bid, long? companyId)
         {
             if (bid is null || bid.BidTypeId == (int)BidTypes.Freelancing)
                 return OperationResult<GetCompaniesToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, BidErrorCodes.INVALID_BID);
@@ -4234,7 +4234,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<GetCompaniesToBuyTermsBookResponse>.Success(company);
         }
 
-        private async Task<OperationResult<GetFreelancersToBuyTermsBookResponse>> CanFreelancerBuyTermsBook(Bid bid, long? freelancerId)
+        public async Task<OperationResult<GetFreelancersToBuyTermsBookResponse>> CanFreelancerBuyTermsBook(Bid bid, long? freelancerId)
         {
             if (bid is null || bid.BidTypeId != (int)BidTypes.Freelancing)
                 return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, BidErrorCodes.INVALID_BID);
@@ -4261,7 +4261,7 @@ namespace Nafis.Services.Implementation
         }
 
         //3
-        private OperationResult<bool> GetConvinentErrorForBuyTermsBokkForbiddenReasons(GetCompaniesToBuyTermsBookResponse company)
+        public OperationResult<bool> GetConvinentErrorForBuyTermsBokkForbiddenReasons(GetCompaniesToBuyTermsBookResponse company)
         {
             if (company.IsAbleToBuy)
                 return OperationResult<bool>.Success(true);
@@ -4289,7 +4289,7 @@ namespace Nafis.Services.Implementation
 
             return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.COMPANY_NOT_ALLOWED);
         }
-        private OperationResult<bool> GetConvinentErrorForBuyTermsBookForbiddenReasons(GetFreelancersToBuyTermsBookResponse freelancer)
+        public OperationResult<bool> GetConvinentErrorForBuyTermsBookForbiddenReasons(GetFreelancersToBuyTermsBookResponse freelancer)
         {
             if (freelancer.IsAbleToBuy)
                 return OperationResult<bool>.Success(true);
@@ -4310,7 +4310,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.FREELANCER_NOT_ALLOWED_TO_SUBSCRIBE_TO_BID);
         }
 
-        private async Task<ProviderBid> ApplyCouponIfExist(ProviderBid entity)
+        public async Task<ProviderBid> ApplyCouponIfExist(ProviderBid entity)
         {
             if (!string.IsNullOrEmpty(entity.CouponHash))
             {
@@ -4330,7 +4330,7 @@ namespace Nafis.Services.Implementation
             }
             return entity;
         }
-        private async Task LogBuyTenderTermsBookEvent(Bid bid, ProviderBid providerBid, string entityName)
+        public async Task LogBuyTenderTermsBookEvent(Bid bid, ProviderBid providerBid, string entityName)
         {
             //===============log event===============
 
@@ -4350,7 +4350,7 @@ namespace Nafis.Services.Implementation
                 Notes1 = string.Format(styles[1], fileSettings.ONLINE_URL, providerBid.CompanyId ?? providerBid.FreelancerId, entityName, providerBid.CompanyId is not null ? UserType.Provider : UserType.Freelancer)
             });
         }
-        private static void MapProviderBidTaxes(AppGeneralSetting generalSettings, bool? HasTaxRecordNumber, ProviderBid entity, Bid bid)
+        public static void MapProviderBidTaxes(AppGeneralSetting generalSettings, bool? HasTaxRecordNumber, ProviderBid entity, Bid bid)
         {
             double AssociationFees = bid.Association_Fees;
             double TanafosFees = bid.Tanafos_Fees;
@@ -4508,7 +4508,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<QuantityStableSettings>.Success(response);
         }
 
-        private async Task<List<long>> GetCompanyIdsWhoBoughtTermsPolicy(long BidId)
+        public async Task<List<long>> GetCompanyIdsWhoBoughtTermsPolicy(long BidId)
         {
             var companyIds = await _providerBidRepository.Find(x => x.BidId == BidId && x.IsPaymentConfirmed)
             .Select(a => a.CompanyId??0)
@@ -4601,7 +4601,7 @@ namespace Nafis.Services.Implementation
         }
 
 
-        private async Task<PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>> HandlePublicBidsQuery(int pageSize, int pageNumber, IQueryable<Bid> bids)
+        public async Task<PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>> HandlePublicBidsQuery(int pageSize, int pageNumber, IQueryable<Bid> bids)
         {
             int totalRecords = await bids.CountAsync();
             if (bids == null || totalRecords == 0)
@@ -4620,7 +4620,7 @@ namespace Nafis.Services.Implementation
 
             return new PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>(bidsModels, pageNumber, pageSize, totalRecords);
         }
-        private async Task MapCurrentUserData(List<ReadOnlyPublicBidListModel> bidsModels, ApplicationUser user)
+        public async Task MapCurrentUserData(List<ReadOnlyPublicBidListModel> bidsModels, ApplicationUser user)
         {
             var userFavBids = (await _userFavBidList.Find(x => x.UserId == user.Id).ToListAsync()).ToDictionary(x => x.BidId);
             var bidsIds = bidsModels.Select(x => x.Id);
@@ -4663,7 +4663,7 @@ namespace Nafis.Services.Implementation
             }            
         }
 
-        private async Task MapBidsModels(List<Bid> bidsList, List<ReadOnlyPublicBidListModel> bidsModels)
+        public async Task MapBidsModels(List<Bid> bidsList, List<ReadOnlyPublicBidListModel> bidsModels)
         {
             int regionCount = await _regionRepository.Find(a => true, true, false).CountAsync();
             foreach (var bid in bidsList)
@@ -4699,7 +4699,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private static async Task<List<Bid>> GetBidsList(int pageSize, int pageNumber, IQueryable<Bid> bids)
+        public static async Task<List<Bid>> GetBidsList(int pageSize, int pageNumber, IQueryable<Bid> bids)
         {
             return await bids
                 .OrderByDescending(c => c.CreationDate)
@@ -4716,7 +4716,7 @@ namespace Nafis.Services.Implementation
                 .ToListAsync();
         }
 
-        private async Task MapEntityData(Bid bid, ReadOnlyPublicBidListModel model)
+        public async Task MapEntityData(Bid bid, ReadOnlyPublicBidListModel model)
         {
             //var user = _currentUserService?.CurrentUser;
             //if (user != null)
@@ -5194,7 +5194,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<OperationResult<List<BidStatusResponse>>> GetBidStatusWithDatesNew(Bid bidInDb)
+        public async Task<OperationResult<List<BidStatusResponse>>> GetBidStatusWithDatesNew(Bid bidInDb)
         {
             if (bidInDb is null)
                 return OperationResult<List<BidStatusResponse>>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.BID_NOT_FOUND);
@@ -5343,7 +5343,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<List<BidStatusResponse>>.Success(await OrderTimelineByIndexIfIgnoreTimelineIsTrue(model));
         }
 
-        private static List<BidStatusResponse> CreateAndFillTheResponseModelForStatuses(Bid bidInDb, IEnumerable<Nafes.CrossCutting.Model.Lookups.BidStatus> instantBidStatuses)
+        public static List<BidStatusResponse> CreateAndFillTheResponseModelForStatuses(Bid bidInDb, IEnumerable<Nafes.CrossCutting.Model.Lookups.BidStatus> instantBidStatuses)
         {
             var model = new List<BidStatusResponse>();
             model.AddRange(instantBidStatuses.Select(s => new BidStatusResponse
@@ -5404,7 +5404,7 @@ namespace Nafis.Services.Implementation
             return model;
         }
 
-        private static void SetIsDoneToTrueForPreviousPhases(List<BidStatusResponse> model)
+        public static void SetIsDoneToTrueForPreviousPhases(List<BidStatusResponse> model)
         {
             var currentPhaseItem = model.FirstOrDefault(e => e.IsCurrentPhase);
             if (currentPhaseItem != null)
@@ -5429,14 +5429,14 @@ namespace Nafis.Services.Implementation
             return model;
         }
 
-        private void MoveItemToEnd<T>(T item, List<T> list)
+        public void MoveItemToEnd<T>(T item, List<T> list)
         {
             var index = list.IndexOf(item);
             list.RemoveAt(index);
             list.Add(item);
         }
 
-        private async Task<Bid> GetBidWithRelatedEntitiesByIdAsync(long bidId)
+        public async Task<Bid> GetBidWithRelatedEntitiesByIdAsync(long bidId)
         {
             return await _bidRepository
                     .Find(x => x.Id == bidId, true, false)
@@ -5859,7 +5859,7 @@ namespace Nafis.Services.Implementation
             }
 
         }
-        private async Task MapRevealsData(ApplicationUser user, Bid bid, ReadOnlyBidResponse model)
+        public async Task MapRevealsData(ApplicationUser user, Bid bid, ReadOnlyBidResponse model)
         {
             var userType = user.UserType == UserType.Provider ? UserType.Company : user.UserType;
             var isFeaturesEnabled = await _appGeneralSettingsRepository
@@ -5949,7 +5949,7 @@ namespace Nafis.Services.Implementation
                 };
         }
 
-        private async Task CreatePremiumPackageUsageTracking(Bid bid)
+        public async Task CreatePremiumPackageUsageTracking(Bid bid)
         {
             using var scope = _serviceProvider.CreateScope();
             var _subscriptionsSettingsService = scope.ServiceProvider.GetRequiredService<ISubscriptionsSettingsService>();
@@ -6072,7 +6072,7 @@ namespace Nafis.Services.Implementation
         //        };
         //}
 
-        private bool CheckIfWeShouldNotShowProviderData(Bid bid, bool ignoreTimeLine)
+        public bool CheckIfWeShouldNotShowProviderData(Bid bid, bool ignoreTimeLine)
         {
             var currentUser = _currentUserService.CurrentUser;
             if (Constants.AdminstrationUserTypes.Contains(currentUser.UserType))
@@ -6120,7 +6120,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<bool> CheckIfBidForAssignedComapniesOnly(Bid bid, Company company)
+        public async Task<bool> CheckIfBidForAssignedComapniesOnly(Bid bid, Company company)
         {
             return bid.IsBidAssignedForAssociationsOnly
                 && company.AssignedAssociationId is null
@@ -6130,7 +6130,7 @@ namespace Nafis.Services.Implementation
                 .AnyAsync();
         }
 
-        private async Task MapBidCreatorDetailsIfAssociation(ApplicationUser user, Bid bid, ReadOnlyBidResponse model)
+        public async Task MapBidCreatorDetailsIfAssociation(ApplicationUser user, Bid bid, ReadOnlyBidResponse model)
         {
             model.BidCreatorDetails = user.UserType == UserType.SuperAdmin ||
                 user.UserType == UserType.Admin ? new BidCreatorDetailsResponse()
@@ -6143,7 +6143,7 @@ namespace Nafis.Services.Implementation
                 } : null;
         }
 
-        private async Task MapBidCreatorDetailsObjectIfDonor(ApplicationUser user, Bid bid, ReadOnlyBidResponse model)
+        public async Task MapBidCreatorDetailsObjectIfDonor(ApplicationUser user, Bid bid, ReadOnlyBidResponse model)
         {
             model.BidCreatorDetails = user.UserType == UserType.SuperAdmin ||
                 user.UserType == UserType.Admin ? new BidCreatorDetailsResponse()
@@ -6156,7 +6156,7 @@ namespace Nafis.Services.Implementation
                 } : null;
         }
 
-        private async Task MapBidReview(Bid bid, ReadOnlyBidResponse model)
+        public async Task MapBidReview(Bid bid, ReadOnlyBidResponse model)
         {
             var user = _currentUserService.CurrentUser;
             if (!CheckIfUserCanViewLog(bid, model, user))
@@ -6165,7 +6165,7 @@ namespace Nafis.Services.Implementation
             model.BidReviewDetailsResponse = reviewLog.Data;
         }
 
-        private static bool CheckIfUserCanViewLog(Bid bid, ReadOnlyBidResponse model, ApplicationUser user)
+        public static bool CheckIfUserCanViewLog(Bid bid, ReadOnlyBidResponse model, ApplicationUser user)
         {
             var isCreator = (user.UserType == bid.EntityType && user.CurrentOrgnizationId == bid.EntityId);
             var isDonorIsSponsor = (user.UserType == UserType.Donor &&
@@ -6175,7 +6175,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task<OperationResult<ReadOnlyBidResponse>> MapPublicData(long bidId)
+        public async Task<OperationResult<ReadOnlyBidResponse>> MapPublicData(long bidId)
         {
             var bid = await GetBidWithRelatedEntitiesByIdAsync(bidId);
 
@@ -6266,7 +6266,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<ReadOnlyBidResponse>.Success(model);
         }
 
-        private async Task MapAwardinData(Bid bid, ReadOnlyBidResponse model, Company company, AwardingSelect awardingSelect, Freelancer freelancer)
+        public async Task MapAwardinData(Bid bid, ReadOnlyBidResponse model, Company company, AwardingSelect awardingSelect, Freelancer freelancer)
         {
             var awardingProvider = awardingSelect.AwardingProviders.OrderByDescending(a => a.CreationDate).FirstOrDefault();
             if (awardingProvider != null)
@@ -6344,12 +6344,12 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private static bool CheckIfCurrentUserIsCreator(ApplicationUser user, ReadOnlyBidResponse model)
+        public static bool CheckIfCurrentUserIsCreator(ApplicationUser user, ReadOnlyBidResponse model)
         {
             return user.CurrentOrgnizationId == model.EntityId && user.UserType == model.EntityType;
         }
 
-        private async Task MapCancelRequestStatus(Bid bid, ReadOnlyBidResponse model)
+        public async Task MapCancelRequestStatus(Bid bid, ReadOnlyBidResponse model)
         {
             var lastCancelRequest = await
                  _cancelBidRequestRepository
@@ -6360,7 +6360,7 @@ namespace Nafis.Services.Implementation
             model.CancelBidRequestDate = lastCancelRequest is null ? null : lastCancelRequest.CreationDate;
         }
 
-        private async Task FillEvaluationData(Bid bid, ReadOnlyBidResponse model)
+        public async Task FillEvaluationData(Bid bid, ReadOnlyBidResponse model)
         {
             // هنا بجيب التقييم اللى اتعمل للمورد من قبل الجمعيه   
             var entityEvaluation = await _evaluationRepository
@@ -6428,7 +6428,7 @@ namespace Nafis.Services.Implementation
             //    model.CompanyEvaluation = companyEvaluation;
         }
 
-        private void ReturnDistinctSupervisingDataBasedOnClaimType(ReadOnlyBidResponse model)
+        public void ReturnDistinctSupervisingDataBasedOnClaimType(ReadOnlyBidResponse model)
         {
             if (model.BidSupervisingData.Any())
             {
@@ -6512,7 +6512,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<OperationResult<long>> IncreaseBidViewCountNew(Bid bid, ApplicationUser user)
+        public async Task<OperationResult<long>> IncreaseBidViewCountNew(Bid bid, ApplicationUser user)
         {
 
             long count = 5;
@@ -6558,7 +6558,7 @@ namespace Nafis.Services.Implementation
             return OperationResult<long>.Success(count);
         }
 
-        private async Task AddbidViewLog(Bid bid, Organization org, int bidViewsCount)
+        public async Task AddbidViewLog(Bid bid, Organization org, int bidViewsCount)
         {
             BidViewsLog request = new BidViewsLog
             {
@@ -6843,7 +6843,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private IQueryable<Bid> GetBidsForCurrentUser(ApplicationUser usr, Donor donor)
+        public IQueryable<Bid> GetBidsForCurrentUser(ApplicationUser usr, Donor donor)
         {
             IQueryable<Bid> bids = _bidRepository.Find(bid => !bid.IsDeleted, false)
                                         .Include(b => b.BidAddressesTime)
@@ -6873,7 +6873,7 @@ namespace Nafis.Services.Implementation
             return bids;
         }
 
-        private static IQueryable<ProviderBid> ApplyFiltrationForProviderBids(FilterBidsSearchModel model, IQueryable<ProviderBid> providerBids, UserType userType)
+        public static IQueryable<ProviderBid> ApplyFiltrationForProviderBids(FilterBidsSearchModel model, IQueryable<ProviderBid> providerBids, UserType userType)
         {
             if (model.IsBidAssignedForAssociationsOnly)
                 providerBids = providerBids.Where(b => b.Bid.IsBidAssignedForAssociationsOnly);
@@ -6985,7 +6985,7 @@ namespace Nafis.Services.Implementation
             return providerBids;
         }
 
-        private async Task<IQueryable<Bid>> ApplyFiltrationForBids(FilterBidsSearchModel model, IQueryable<Bid> bids,bool getFreelancingBids=false)
+        public async Task<IQueryable<Bid>> ApplyFiltrationForBids(FilterBidsSearchModel model, IQueryable<Bid> bids,bool getFreelancingBids=false)
         {
             if (model.IsBidAssignedForAssociationsOnly)
                 bids = bids.Where(b => b.IsBidAssignedForAssociationsOnly);
@@ -7139,7 +7139,7 @@ namespace Nafis.Services.Implementation
         }
 
 
-        private async Task GetModelItemForBid(string currentUserId, Bid bid, GetMyBidResponse model, Association associationBid, Donor donor, List<UserFavBidList> userFavorites)
+        public async Task GetModelItemForBid(string currentUserId, Bid bid, GetMyBidResponse model, Association associationBid, Donor donor, List<UserFavBidList> userFavorites)
         {
             model.Id = bid.Id;
             model.Title = bid.BidName;
@@ -7184,7 +7184,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private bool IsBidFavoriteByCurrentUser(string userId, long bidId, List<UserFavBidList> userFavorites)
+        public bool IsBidFavoriteByCurrentUser(string userId, long bidId, List<UserFavBidList> userFavorites)
         {
             if (string.IsNullOrEmpty(userId))
                 return false;
@@ -7417,7 +7417,7 @@ namespace Nafis.Services.Implementation
         }
 
 
-        private async Task<PagedResponse<IReadOnlyList<GetMyBidResponse>>> GetAllBidsForVisitor(FilterBidsSearchModel request)
+        public async Task<PagedResponse<IReadOnlyList<GetMyBidResponse>>> GetAllBidsForVisitor(FilterBidsSearchModel request)
         {
             try
             {
@@ -7469,7 +7469,7 @@ namespace Nafis.Services.Implementation
             }
         }
        
-        private async Task<PagedResponse<IReadOnlyList<GetMyBidResponse>>> GetAllBidsForBidParticipants(FilterBidsSearchModel request, IQueryable<Bid> bids, ApplicationUser user)
+        public async Task<PagedResponse<IReadOnlyList<GetMyBidResponse>>> GetAllBidsForBidParticipants(FilterBidsSearchModel request, IQueryable<Bid> bids, ApplicationUser user)
         {
             Company company = null;
             Freelancer freelancer = null;
@@ -7537,7 +7537,7 @@ namespace Nafis.Services.Implementation
             return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(bidsModelsForCompany, request.pageNumber, request.pageSize, totalRecordsForCompany);
         }
 
-        private IQueryable<Bid> GetAssignedForAssociationsOnlyBidsAndThisCompanyBoughtTermsBook(long companyId)
+        public IQueryable<Bid> GetAssignedForAssociationsOnlyBidsAndThisCompanyBoughtTermsBook(long companyId)
         {
             return _bidRepository.Find(x =>
                             !x.IsDeleted
@@ -7545,7 +7545,7 @@ namespace Nafis.Services.Implementation
                             && x.ProviderBids.Any(p => p.IsPaymentConfirmed && p.CompanyId == companyId), true);
         }
 
-        private IQueryable<ProviderBid> GetAssignedForAssociationsOnlyProviderBidsAndThisCompanyBoughtTermsBook(long companyId)
+        public IQueryable<ProviderBid> GetAssignedForAssociationsOnlyProviderBidsAndThisCompanyBoughtTermsBook(long companyId)
         {
             return _providerBidRepository.Find(x =>
                             !x.Bid.IsDeleted
@@ -7554,7 +7554,7 @@ namespace Nafis.Services.Implementation
                             && x.CompanyId == companyId, true);
         }
 
-        private IQueryable<Bid> GetRelatedBidsToBidParticipantWorkingSectorsFirstOrder(IQueryable<Bid> bids, Freelancer freelancer, Company company, ApplicationUser user, List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData)
+        public IQueryable<Bid> GetRelatedBidsToBidParticipantWorkingSectorsFirstOrder(IQueryable<Bid> bids, Freelancer freelancer, Company company, ApplicationUser user, List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData)
         {
             var bidParticipantWorkingSectorsIds = bidParticipantWorkingSectorsMiniData.Select(x => x.Id);
 
@@ -7575,7 +7575,7 @@ namespace Nafis.Services.Implementation
             return bids;
         }
 
-        private async Task MapAllBidsResult(ApplicationUser user, Company company, Association association, Donor donor, Freelancer freelancer, List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData, List<Bid> result, List<GetMyBidResponse> bidsModels)
+        public async Task MapAllBidsResult(ApplicationUser user, Company company, Association association, Donor donor, Freelancer freelancer, List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData, List<Bid> result, List<GetMyBidResponse> bidsModels)
         {
             var bidsIds = bidsModels.Select(a => a.Id);
             var providerBids = await _providerBidRepository
@@ -7673,7 +7673,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task MapBidModelsBasicData(List<Bid> result, List<GetMyBidResponse> bidsModels, IEnumerable<long> bidsIds)
+        public async Task MapBidModelsBasicData(List<Bid> result, List<GetMyBidResponse> bidsModels, IEnumerable<long> bidsIds)
         {
             var bidRegions = await _bidRegionsRepository
                     .Find(a => bidsIds.Contains(a.BidId), true, false)
@@ -7706,7 +7706,7 @@ namespace Nafis.Services.Implementation
 
 
         #region check if need refact 
-        private IQueryable<Bid> GetPrivateBidsForCurrentAssociation(long associationId, long entityId)
+        public IQueryable<Bid> GetPrivateBidsForCurrentAssociation(long associationId, long entityId)
         {
             if (associationId > 0)
             {
@@ -7719,7 +7719,7 @@ namespace Nafis.Services.Implementation
             }
             return Enumerable.Empty<Bid>().AsQueryable();
         }
-        private IQueryable<Bid> GetPrivateBidsForCurrentDonor(long donorId, long entityId)
+        public IQueryable<Bid> GetPrivateBidsForCurrentDonor(long donorId, long entityId)
         {
             if (donorId > 0)
             {
@@ -7734,7 +7734,7 @@ namespace Nafis.Services.Implementation
             }
             return Enumerable.Empty<Bid>().AsQueryable();
         }
-        private IQueryable<Bid> GetPrivateBidsForSupervisorDonor(long donorId)
+        public IQueryable<Bid> GetPrivateBidsForSupervisorDonor(long donorId)
         {
             if (donorId > 0)
             {
@@ -8073,7 +8073,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private static bool validateAddInstantBidRequest(AddInstantBid addInstantBidRequest, out string requiredparams)
+        public static bool validateAddInstantBidRequest(AddInstantBid addInstantBidRequest, out string requiredparams)
         {
             Dictionary<string, Predicate<AddInstantBid>> predicates = new Dictionary<string, Predicate<AddInstantBid>>()
             {
@@ -8090,7 +8090,7 @@ namespace Nafis.Services.Implementation
                                     addInstantBidRequest.BidTypeBudgetId == default);
         }
 
-        private async Task<OperationResult<AddBidResponse>> AddInstantBid(AddInstantBid addInstantBidRequest, ApplicationUser usr, BidTypesBudgets bidTypeBudget)
+        public async Task<OperationResult<AddBidResponse>> AddInstantBid(AddInstantBid addInstantBidRequest, ApplicationUser usr, BidTypesBudgets bidTypeBudget)
         {
             var generalSettings = (await _appGeneralSettingService.GetAppGeneralSettings()).Data;
             var bid = _mapper.Map<Bid>(addInstantBidRequest);
@@ -8150,7 +8150,7 @@ namespace Nafis.Services.Implementation
             });
         }
 
-        private async Task<OperationResult<AddBidResponse>> EditInstantBid(AddInstantBid addInstantBidRequest, ApplicationUser usr, BidTypesBudgets bidTypeBudget)
+        public async Task<OperationResult<AddBidResponse>> EditInstantBid(AddInstantBid addInstantBidRequest, ApplicationUser usr, BidTypesBudgets bidTypeBudget)
         {
             var bid = await _bidRepository
                 .Find(x => x.Id == addInstantBidRequest.Id, false,
@@ -8224,7 +8224,7 @@ namespace Nafis.Services.Implementation
             });
         }
 
-        private async Task MapIndustries(AddInstantBid addInstantBidRequest, ApplicationUser usr, Bid bid, List<long> parentIgnoredCommercialSectorIds)
+        public async Task MapIndustries(AddInstantBid addInstantBidRequest, ApplicationUser usr, Bid bid, List<long> parentIgnoredCommercialSectorIds)
         {
             if (addInstantBidRequest.IndustriesIds is null || addInstantBidRequest.IndustriesIds.Count == 0)
                 return;
@@ -8235,7 +8235,7 @@ namespace Nafis.Services.Implementation
                 await AddUpdateBidCommercialSectors(usr, bid, parentIgnoredCommercialSectorIds);
         }
 
-        private async Task AddUpdateBidCommercialSectors(ApplicationUser usr, Bid bid, List<long> parentIgnoredCommercialSectorIds)
+        public async Task AddUpdateBidCommercialSectors(ApplicationUser usr, Bid bid, List<long> parentIgnoredCommercialSectorIds)
         {
             List<Bid_Industry> bidIndustries = new List<Bid_Industry>();
             foreach (var cid in parentIgnoredCommercialSectorIds)
@@ -8258,7 +8258,7 @@ namespace Nafis.Services.Implementation
             await _bidIndustryRepository.AddRange(bidIndustries);
         }
 
-        private async Task AddUpdateBidFreelanceWorkingSectors(ApplicationUser usr, Bid bid, List<long> parentIgnoredCommercialSectorIds)
+        public async Task AddUpdateBidFreelanceWorkingSectors(ApplicationUser usr, Bid bid, List<long> parentIgnoredCommercialSectorIds)
         {
             List<FreelanceBidIndustry> bidIndustries = new List<FreelanceBidIndustry>();
             foreach (var cid in parentIgnoredCommercialSectorIds)
@@ -8378,31 +8378,31 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private static bool CheckIfWeShouldMakeBidAtReviewingStatus(AddInstantBidsAttachments addInstantBidsAttachmentsRequest, ApplicationUser usr, TenderStatus oldStatusOfbid)
+        public static bool CheckIfWeShouldMakeBidAtReviewingStatus(AddInstantBidsAttachments addInstantBidsAttachmentsRequest, ApplicationUser usr, TenderStatus oldStatusOfbid)
         {
             var isEntity = usr.UserType == UserType.Association || usr.UserType == UserType.Donor;
             return CheckIfWasDraftAndChanged(addInstantBidsAttachmentsRequest.BidStatusId.Value, oldStatusOfbid)
                                 || (isEntity && addInstantBidsAttachmentsRequest.BidStatusId != (int)TenderStatus.Draft);
         }
 
-        private static bool CheckIfWeCanPublishBid(Bid bid, TenderStatus oldStatusOfbid, BidDonor bidDonor, OperationResult<List<GetDonorSupervisingServiceClaimsResponse>> supervisingDonorClaims)
+        public static bool CheckIfWeCanPublishBid(Bid bid, TenderStatus oldStatusOfbid, BidDonor bidDonor, OperationResult<List<GetDonorSupervisingServiceClaimsResponse>> supervisingDonorClaims)
         {
             return CheckIfWasDraftAndBecomeOpen(bid, oldStatusOfbid) &&
                                 (bidDonor is null || (bidDonor is not null && supervisingDonorClaims.Data is not null &&
                                 supervisingDonorClaims.Data.Any(x => x.ClaimType == SupervisingServiceClaimCodes.clm_3057 && !x.IsChecked)));
         }
 
-        private static bool CheckIfWasDraftAndChanged(int bidStatus, TenderStatus oldStatusOfbid)
+        public static bool CheckIfWasDraftAndChanged(int bidStatus, TenderStatus oldStatusOfbid)
         {
             return oldStatusOfbid == TenderStatus.Draft && bidStatus != (int)TenderStatus.Draft;
         }
 
-        private bool IsCurrentUserBidCreator(ApplicationUser usr, Bid bid)
+        public bool IsCurrentUserBidCreator(ApplicationUser usr, Bid bid)
         {
             return (usr.UserType == UserType.Association || usr.UserType == UserType.Donor) && (bid.EntityType != usr.UserType || bid.EntityId != usr.CurrentOrgnizationId);
 
         }
-        private async Task LogBidCreationEvent(Bid bid)
+        public async Task LogBidCreationEvent(Bid bid)
         {
             //===============log event===============
             var industries = bid.Bid_Industries.Select(a => a.CommercialSectorsTree.NameAr).ToList();
@@ -8421,11 +8421,11 @@ namespace Nafis.Services.Implementation
             });
         }
 
-        private static bool CheckIfWasDraftAndBecomeOpen(Bid bid, TenderStatus oldStatusOfbid)
+        public static bool CheckIfWasDraftAndBecomeOpen(Bid bid, TenderStatus oldStatusOfbid)
         {
             return bid.BidStatusId == (int)TenderStatus.Open && oldStatusOfbid == TenderStatus.Draft;
         }
-        private async Task<List<BidAttachment>> MapInstantBidAttachments(AddInstantBidsAttachments addInstantBidsAttachmentsRequest, Bid bid)
+        public async Task<List<BidAttachment>> MapInstantBidAttachments(AddInstantBidsAttachments addInstantBidsAttachmentsRequest, Bid bid)
         {
             var existingAttachments_ContactList = await _bidAttachmentRepository.
                 Find(x => x.BidId == addInstantBidsAttachmentsRequest.BidId).ToListAsync();
@@ -8452,7 +8452,7 @@ namespace Nafis.Services.Implementation
             return bidAttachmentsToSave;
         }
 
-        private async Task<OperationResult<AddInstantBidAttachmentResponse>> ValidateAddBidAttachmentsRequest
+        public async Task<OperationResult<AddInstantBidAttachmentResponse>> ValidateAddBidAttachmentsRequest
             (AddInstantBidsAttachments addInstantBidsAttachmentsRequest, Bid bid, ApplicationUser usr)
         {
 
@@ -8515,7 +8515,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<List<InvitedCompanyResponseDto>> GetAllInvitedCompaniesResponseForBid(GetAllInvitedCompaniesRequestModel request)
+        public async Task<List<InvitedCompanyResponseDto>> GetAllInvitedCompaniesResponseForBid(GetAllInvitedCompaniesRequestModel request)
         {
             var invitedCompanies = _bidInvitationsRepository
                     .Find(c => c.BidId == request.BidId)
@@ -8537,7 +8537,7 @@ namespace Nafis.Services.Implementation
             return GetAllInvitedCompaniesModels(result).ToList();
         }
 
-        private IEnumerable<InvitedCompanyResponseDto> GetAllInvitedCompaniesModels(List<BidInvitations> allCompanies)
+        public IEnumerable<InvitedCompanyResponseDto> GetAllInvitedCompaniesModels(List<BidInvitations> allCompanies)
         {
             foreach (var inv in allCompanies)
             {
@@ -8558,7 +8558,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task UpdateBidRegions(List<int> regionsId, long bidId)
+        public async Task UpdateBidRegions(List<int> regionsId, long bidId)
         {
             List<BidRegion> oldBidRegionsToBeDeleted = await _bidRegionsRepository.Find(bidReg => bidReg.BidId == bidId).ToListAsync();
             await _bidRegionsRepository.DeleteRangeAsync(oldBidRegionsToBeDeleted);
@@ -8566,7 +8566,7 @@ namespace Nafis.Services.Implementation
             await AddBidRegions(regionsId, bidId);
         }
 
-        private async Task AddBidRegions(List<int> regionsId, long bidId)
+        public async Task AddBidRegions(List<int> regionsId, long bidId)
         {
             if (regionsId.IsNullOrEmpty())
                 return;
@@ -8680,7 +8680,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<OperationResult<bool>> AddInvitationToAssocationByDonorIfFound(InvitedAssociationByDonorModel model, Bid bid, bool IsAssociationFoundToSupervise, long? SupervisingAssociationId)
+        public async Task<OperationResult<bool>> AddInvitationToAssocationByDonorIfFound(InvitedAssociationByDonorModel model, Bid bid, bool IsAssociationFoundToSupervise, long? SupervisingAssociationId)
         {
             if (_currentUserService.IsUserNotAuthorized(new List<UserType> { UserType.Association, UserType.Donor, UserType.SuperAdmin, UserType.Admin }))
                 return OperationResult<bool>.Fail(HttpErrorCode.NotAuthorized, RegistrationErrorCodes.YOU_ARE_NOT_AUTHORIZED);
@@ -8752,7 +8752,7 @@ namespace Nafis.Services.Implementation
 
             return OperationResult<bool>.Success(true);
         }
-        private async Task<InvitedAssociationByDonorResponse> GetInvitedAssociationIfFound(Bid bid)
+        public async Task<InvitedAssociationByDonorResponse> GetInvitedAssociationIfFound(Bid bid)
         {
             if (bid.IsAssociationFoundToSupervise == false || !bid.SupervisingAssociationId.HasValue || bid.SupervisingAssociationId.Value >= 0)
                 return null;
@@ -8761,7 +8761,7 @@ namespace Nafis.Services.Implementation
 
         }
  
-        private async Task<Donor> GetDonorUser(ApplicationUser user)
+        public async Task<Donor> GetDonorUser(ApplicationUser user)
         {
             if (user is null || user.UserType != UserType.Donor)
                 return null;
@@ -8924,7 +8924,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task InviteProvidersInBackground(Bid bid, bool isAutomatically, ApplicationUser user)
+        public async Task InviteProvidersInBackground(Bid bid, bool isAutomatically, ApplicationUser user)
         {
             try
             {
@@ -9134,7 +9134,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task ApproveBidBySupervisor(ApplicationUser user, Bid bid, BidDonor bidDonor)
+        public async Task ApproveBidBySupervisor(ApplicationUser user, Bid bid, BidDonor bidDonor)
         {
             if (bid.BidTypeId == (int)BidTypes.Private)
             {
@@ -9199,7 +9199,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task DoBusinessAfterPublishingBid(Bid bid, ApplicationUser usr)
+        public async Task DoBusinessAfterPublishingBid(Bid bid, ApplicationUser usr)
         {
             var _commonEmailAndNotificationService = (ICommonEmailAndNotificationService)_serviceProvider.GetService(typeof(ICommonEmailAndNotificationService));
 
@@ -9212,7 +9212,7 @@ namespace Nafis.Services.Implementation
             await SendNewBidEmailToSuperAdmins(bid);
         }
 
-        private async Task SendEmailToAssociationWhenDonorApproveBidSubmission(Bid bid, Donor donor)
+        public async Task SendEmailToAssociationWhenDonorApproveBidSubmission(Bid bid, Donor donor)
         {
             if ((bid is null || donor is null) || !bid.AssociationId.HasValue)
                 return;
@@ -9246,7 +9246,7 @@ namespace Nafis.Services.Implementation
 
             await _emailService.SendAsync(emailRequest);
         }
-        private async Task SendNotificationToAssociationWhenDonorApproveBidSubmission(Bid bid, Donor donor)
+        public async Task SendNotificationToAssociationWhenDonorApproveBidSubmission(Bid bid, Donor donor)
         {
             if ((bid is null || donor is null) || !bid.AssociationId.HasValue)
                 return;
@@ -9276,7 +9276,7 @@ namespace Nafis.Services.Implementation
             await _notificationService.SendRealTimeNotificationToUsersAsync(notificationObj, recievers.RealtimeReceivers.Select(a => a.ActualRecieverId).ToList(), (int)SystemEventsTypes.ApproveBidNotification);
         }
 
-        private async Task SendEmailToAssociationWhenDonorRejectBidSubmission(Bid bid, Donor donor, string rejectionReason)
+        public async Task SendEmailToAssociationWhenDonorRejectBidSubmission(Bid bid, Donor donor, string rejectionReason)
         {
             if ((bid is null || donor is null) || !bid.AssociationId.HasValue)
                 return;
@@ -9299,7 +9299,7 @@ namespace Nafis.Services.Implementation
             };
             await _emailService.SendAsync(emailRequest);
         }
-        private async Task SendNotificationToAssociationWhenDonorRejectBidSubmission(Bid bid, Donor donor, string rejectionReason)
+        public async Task SendNotificationToAssociationWhenDonorRejectBidSubmission(Bid bid, Donor donor, string rejectionReason)
         {
             if ((bid is null || donor is null) || !bid.AssociationId.HasValue)
                 return;
@@ -9332,7 +9332,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task SendEmailToAssociationWhenBidInquiryDateEndAndBidStatusIsPending(Bid bid, Donor donor)
+        public async Task SendEmailToAssociationWhenBidInquiryDateEndAndBidStatusIsPending(Bid bid, Donor donor)
         {
             if ((bid is null || donor is null) || !bid.AssociationId.HasValue)
                 return;
@@ -9354,7 +9354,7 @@ namespace Nafis.Services.Implementation
 
             await _emailService.SendAsync(emailRequest);
         }
-        private async Task SendNotificationToAssociationWhenBidInquiryDateEndAndBidStatusIsPending(Bid bid, Donor donor)
+        public async Task SendNotificationToAssociationWhenBidInquiryDateEndAndBidStatusIsPending(Bid bid, Donor donor)
         {
             if ((bid is null || donor is null) || !bid.AssociationId.HasValue)
                 return;
@@ -9593,7 +9593,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task<long?> MapBidTypeBudgetId(Bid bid)
+        public async Task<long?> MapBidTypeBudgetId(Bid bid)
         {
             if (bid.BidTypeBudgetId is null)
                 return null;
@@ -9605,7 +9605,7 @@ namespace Nafis.Services.Implementation
             return bidTypeBudget.Id;
         }
 
-        private async Task CopyBidAchievementPhasesPhases(Bid bid, Bid copyBid)
+        public async Task CopyBidAchievementPhasesPhases(Bid bid, Bid copyBid)
         {
             await _bidAchievementPhasesRepository.AddRange(bid.BidAchievementPhases.Select(oldPhase => new BidAchievementPhases
             {
@@ -9661,7 +9661,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task SendSMSPublishBidToProvider(Bid bid)
+        public async Task SendSMSPublishBidToProvider(Bid bid)
         {
 
             var emails = bid.BidTypeId!=(int) BidTypes.Freelancing?
@@ -9717,7 +9717,7 @@ namespace Nafis.Services.Implementation
             }
         }
 
-        private async Task LogToggelsAbleToSubscribeToBidAction(Bid bid, EventTypes eventType, ApplicationUser user)
+        public async Task LogToggelsAbleToSubscribeToBidAction(Bid bid, EventTypes eventType, ApplicationUser user)
         {
             //===============log event===============
             string[] styles = await _helperService.GetEventStyle(eventType);
@@ -9773,7 +9773,7 @@ namespace Nafis.Services.Implementation
             return ((decimal)associationFees, (decimal)tanafosFees);
         }
 
-        private async Task UpdateBidRelatedAttachmentsFileNameAfterBidNameChanging(long bidId, string newBidName)
+        public async Task UpdateBidRelatedAttachmentsFileNameAfterBidNameChanging(long bidId, string newBidName)
         {
             var bid = await _bidRepository.Find(x => x.Id == bidId, true, false)
                 .Include(x => x.Association)
@@ -10062,7 +10062,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task<(bool IsSuceeded, string ErrorMessage, string LogRef, long Count)> SendEmailToCompaniesLimitedOffersChanged(Bid bid)
+        public async Task<(bool IsSuceeded, string ErrorMessage, string LogRef, long Count)> SendEmailToCompaniesLimitedOffersChanged(Bid bid)
         {
             using var scope = _serviceScopeFactory.CreateScope();
             var helperService = scope.ServiceProvider.GetRequiredService<IHelperService>();
@@ -10143,7 +10143,7 @@ namespace Nafis.Services.Implementation
             return (true, string.Empty, string.Empty, providersEmails.Count);
         }
 
-        private async Task UpdateBidStatus(long bidId)
+        public async Task UpdateBidStatus(long bidId)
         {
             try
             {
@@ -10185,7 +10185,7 @@ namespace Nafis.Services.Implementation
                 });
             }
         }
-        private async Task MapAllBidsResultForVisitor(List<Bid> result, List<GetMyBidResponse> bidsModels)
+        public async Task MapAllBidsResultForVisitor(List<Bid> result, List<GetMyBidResponse> bidsModels)
         {
             foreach (var itm in bidsModels)
             {
@@ -10261,7 +10261,7 @@ namespace Nafis.Services.Implementation
 
         }
 
-        private async Task<OperationResult<bool>> checkIfParticipantCanAccessBidData(long bidId, ApplicationUser user)
+        public async Task<OperationResult<bool>> checkIfParticipantCanAccessBidData(long bidId, ApplicationUser user)
         {
 
             if (user is null)
