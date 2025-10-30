@@ -1,0 +1,220 @@
+
+
+        // Migrated from BidServiceCore
+        private long GetBidCreatorId(Bid bid)
+        {
+            if (bid.EntityType == UserType.Association)
+            {
+                return (long)bid.AssociationId;
+            }
+            else if (bid.EntityType == UserType.Donor)
+            {
+                return bid.EntityId;
+            }
+
+            return 0;
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<List<GetBidViewsModel>>> GetBidViews(long bidId, int pageSize, int pageNumber)
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+                if (user == null)
+                    return new PagedResponse<List<GetBidViewsModel>>(HttpErrorCode.NotAuthenticated);
+
+                var bidViewsLogQuery = _bidViewsLogRepository.Find(a => a.BidId == bidId, true, false)
+                    .Include(x => x.Organization)
+                    .AsQueryable();
+
+                int countResult = await bidViewsLogQuery
+                    .CountAsync();
+                if(countResult == 0)
+                    return new PagedResponse<List<GetBidViewsModel>>(new List<GetBidViewsModel>(), pageNumber, pageSize, countResult);
+
+                var bidViewsList = await bidViewsLogQuery
+                    .OrderBy(a => a.SeenDate)
+                    .ApplyPaging(pageNumber, pageSize)
+                    .ToListAsync();
+
+                var associationsIds = bidViewsList.Where(x => x.OrganizationId.HasValue && x.Organization.OrgTypeID == OrganizationType.Assosition).Select(x => x.Organization.EntityID).ToList();
+                var donorsIds = bidViewsList.Where(x => x.OrganizationId.HasValue && x.Organization.OrgTypeID == OrganizationType.Donor).Select(x => x.Organization.EntityID).ToList();
+                var companiesIds = bidViewsList.Where(x => x.OrganizationId.HasValue && x.Organization.OrgTypeID == OrganizationType.Comapny).Select(x => x.Organization.EntityID).ToList();
+                var freelancersIds = bidViewsList.Where(x => x.OrganizationId.HasValue && x.Organization.OrgTypeID == OrganizationType.Freelancer).Select(x => x.Organization.EntityID).ToList();
+
+                var associations = await _associationRepository.Find(a => associationsIds.Contains(a.Id))
+                    .Select(x => new {Id = x.Id, Image = x.Image, ImageFileName = x.ImageFileName})
+                    .ToListAsync();
+                var donors = await _donorRepository.Find(a => donorsIds.Contains(a.Id))
+                    .Select(x => new { Id = x.Id, Image = x.Image, ImageFileName = x.ImageFileName })
+                    .ToListAsync();
+                var companies = await _companyRepository.Find(a => companiesIds.Contains(a.Id))
+                    .Select(x => new { Id = x.Id, Image = x.Image, ImageFileName = x.ImageFileName })
+                    .ToListAsync();
+                var freelancers = await _freelancerRepository.Find(a => companiesIds.Contains(a.Id))
+                    .Select(x => new { Id = x.Id, Image = x.ProfileImageFilePath, ImageFileName = x.ProfileImageFileName })
+                    .ToListAsync();
+
+                List<GetBidViewsModel> model = new List<GetBidViewsModel>();
+                FileResponse logoResponse = new FileResponse();
+                foreach (var item in bidViewsList)
+                {
+                    if(!item.OrganizationId.HasValue) // Anonymous
+                        logoResponse = await _imageService.GetFileResponseEncrypted(fileSettings.Tanafos_Logo_FilePath);
+                    else if (item.Organization.OrgTypeID == OrganizationType.Assosition)
+                    {
+                        var association = associations.FirstOrDefault(a => a.Id == item.Organization.EntityID);
+                        logoResponse = association is not null ? await _imageService.GetFileResponseEncrypted(association.Image, association.ImageFileName) : null;
+                    }
+                    else if (item.Organization.OrgTypeID == OrganizationType.Donor)
+                    {
+                        var donor = donors.FirstOrDefault(a => a.Id == item.Organization.EntityID);
+                        logoResponse = donor is not null ? await _imageService.GetFileResponseEncrypted(donor.Image, donor.ImageFileName) : null;
+                    }
+                    else if (item.Organization.OrgTypeID == OrganizationType.Comapny)
+                    {
+                        var company = companies.FirstOrDefault(a => a.Id == item.Organization.EntityID);
+                        logoResponse = company is not null ? await _imageService.GetFileResponseEncrypted(company.Image, company.ImageFileName) : null;
+                    }
+                    else if (item.Organization.OrgTypeID == OrganizationType.Freelancer)
+                    {
+                        var freelancer = freelancers.FirstOrDefault(a => a.Id == item.Organization.EntityID);
+                        logoResponse = freelancer is not null ? await _imageService.GetFileResponseEncrypted(freelancer.Image, freelancer.ImageFileName) : null;
+                    }
+                    else
+                        throw new ArgumentException($"This Organization Type {item.Organization.OrgTypeID} Not Handled Here {nameof(IBidService.GetBidViews)}");
+
+                    model.Add(new GetBidViewsModel
+                    {
+                            OrganizationName = item.OrganizationId.HasValue ? item.Organization.OrgArName : "زائر",
+                            OrganizationTypeId = item.OrganizationId.HasValue ? item.Organization.OrgTypeID : null,
+                            seenDate = item.SeenDate,
+                            OrganizationLogo = logoResponse,
+                    });
+                }
+                return new PagedResponse<List<GetBidViewsModel>>(model, pageNumber, pageSize, countResult);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"Bid ID = {bidId}",
+                    ErrorMessage = "Failed to Get Bid Views!",
+                    ControllerAndAction = "BidController/GetBidViews/{bidId}"
+                });
+                return new PagedResponse<List<GetBidViewsModel>>(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<BidViewsStatisticsResponse>> GetBidViewsStatisticsAsync(long bidId)
+        {
+            try
+            {
+                if(_currentUserService.IsUserNotAuthorized(new List<UserType> { UserType.SuperAdmin, UserType.Admin}))
+                    return OperationResult<BidViewsStatisticsResponse>.Fail(HttpErrorCode.NotAuthorized, CommonErrorCodes.NotAuthorized);
+
+                var bid = await _bidRepository.FindOneAsync(x => x.Id == bidId && x.BidStatusId != (int)TenderStatus.Draft && x.BidStatusId != (int)TenderStatus.Pending && x.BidStatusId != (int)TenderStatus.Reviewing);
+                if(bid is null)
+                    return OperationResult<BidViewsStatisticsResponse>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.BID_NOT_FOUND);
+
+                var normalBidViewLogs = await _bidViewsLogRepository.Find(x => x.BidId == bid.Id)
+                    .Include(x => x.Organization)
+                    .ToListAsync();
+                var actionedBidViewLogs = await _bidRevealLogRepository.Find(x => x.BidId == bid.Id)
+                    .Select(x => new { Status = x.Status, EntityId = x.CompanyId != null ? x.CompanyId : x.FreelancerId, EntityType = x.CompanyId != null ? UserType.Company : UserType.Freelancer})
+                    .ToListAsync();
+
+
+                var registeredEntityWithoutActionViewsCount = normalBidViewLogs.Where(x => x.OrganizationId.HasValue 
+                /*&& !actionedBidViewLogs.Any(a => x.Organization.EntityID == a.EntityId && _helperService.GetUserTypeFromOrganizationType(x.Organization.OrgTypeID) == a.EntityType)*/)
+                    .Count();
+
+                var anonymousViews = new GetBidViewGroupStatistics
+                {
+                    BidViewGroup = BidViewGroups.Anonymous,
+                    RevealViewStatus = null,
+                    ViewsCount = normalBidViewLogs.Count(x => x.OrganizationId == null),
+                };
+                var registeredEntityWithoutActionViews = new GetBidViewGroupStatistics
+                {
+                    BidViewGroup = BidViewGroups.RegisteredEntityWithoutAction,
+                    RevealViewStatus = null,
+                    ViewsCount = registeredEntityWithoutActionViewsCount,
+                };
+
+                var res = new BidViewsStatisticsResponse
+                {
+                    TotalViewsCount = normalBidViewLogs.Count,
+                    BidViewGroupsStatistics = new List<GetBidViewGroupStatistics> { anonymousViews, registeredEntityWithoutActionViews },
+                };
+
+                var statusesGroups = actionedBidViewLogs.GroupBy(x => x.Status);
+                foreach (BidRevealStatus status in Enum.GetValues(typeof(BidRevealStatus)))
+                {
+                    var groupWithSameStatus = statusesGroups.Where(x => x.Key == status).FirstOrDefault();
+                    var obj = new GetBidViewGroupStatistics
+                    {
+                        BidViewGroup = BidViewGroups.RegisteredEntityWithAction,
+                        RevealViewStatus = status,
+                        ViewsCount = groupWithSameStatus is null ? 0 : groupWithSameStatus.Count(),
+                    };
+                    res.BidViewGroupsStatistics.Add(obj);
+                }
+                return OperationResult<BidViewsStatisticsResponse>.Success(res);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"bidid = {bidId}",
+                    ErrorMessage = "Failed to Get Bid Views Statistics Async!",
+                    ControllerAndAction = "Bid/BidViewsStatistics"
+                });
+                return OperationResult<BidViewsStatisticsResponse>.Fail(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private (decimal, decimal) GetTanafosAssociationFeesOfBoughtTermsBook(ProviderBid pb)
+        {
+            double associationFees = 0;
+            double tanafosFees = 0;
+
+            if (string.IsNullOrEmpty(pb.CouponHash))
+            {
+                associationFees += pb.Bid.Association_Fees;
+                tanafosFees += pb.Bid.Tanafos_Fees;
+            }
+            else
+            {
+                associationFees += pb.AssociationFeesAfterDiscount;
+                tanafosFees += pb.TanafosFeesAfterDiscount;
+            }
+
+            associationFees += pb.AssociationTaxesAmount;
+            tanafosFees += pb.TanafosTaxesAmount;
+
+            return ((decimal)associationFees, (decimal)tanafosFees);
+        }
+
+        // Migrated from BidServiceCore
+        private (decimal, decimal) GetTanafosAssociationFeesOfBoughtTermsBooks(IEnumerable<ProviderBid> pbs)
+        {
+            decimal totalAssociationFees = 0;
+            decimal totalTanafosFees = 0;
+
+            foreach (var pb in pbs)
+            {
+                var (associationFees, tanafosFees) = GetTanafosAssociationFeesOfBoughtTermsBook(pb);
+
+                totalAssociationFees += associationFees;
+                totalTanafosFees += tanafosFees;
+            }
+
+            return (totalAssociationFees, totalTanafosFees);
+        }

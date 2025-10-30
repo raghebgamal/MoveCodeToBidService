@@ -1,0 +1,978 @@
+
+
+        // Migrated from BidServiceCore
+        private async Task<ProviderBid> ApplyCouponIfExist(ProviderBid entity)
+        {
+            if (!string.IsNullOrEmpty(entity.CouponHash))
+            {
+                var createdProviderBid =
+                    await _providerBidRepository.
+                 Find(x => x.Id == entity.Id)
+                 .Include(x => x.Company).ThenInclude(x => x.Provider)
+                 .Include(x=>x.Freelancer)
+                 .Include(x => x.Bid).ThenInclude(x => x.BidAddressesTime)
+                 .Include(x => x.Bid).ThenInclude(x => x.Association)
+                 .Include(x => x.Bid).ThenInclude(x => x.Donor)
+                 .Include(x => x.Bid.Bid_Industries).ThenInclude(x => x.CommercialSectorsTree.Parent)
+                 .Include(x => x.Bid.FreelanceBidIndustries).ThenInclude(x => x.FreelanceWorkingSector.Parent).FirstOrDefaultAsync();
+
+                return await _bidAndCouponServicesCommonMethods.SaveCouponDataUsageHistoryForProviderBidAsync(createdProviderBid, entity.CompanyId != null);
+
+            }
+            return entity;
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<BuyTermsBookResponseModel>> BuyTermsBook(BuyTermsBookModel model)
+        {
+            try
+            {
+                var usr = _currentUserService.CurrentUser;
+                if (_currentUserService.IsUserNotAuthorized(new List<UserType> { UserType.Provider, UserType.Freelancer }))
+                    return OperationResult<BuyTermsBookResponseModel>.Fail(HttpErrorCode.NotAuthorized, RegistrationErrorCodes.YOU_ARE_NOT_AUTHORIZED);
+
+                var bid = await _bidRepository.Find(x => x.Id == model.BidId && x.BidStatusId == (int)TenderStatus.Open,
+                    false, nameof(Bid.TenderSubmitQuotation))
+                    .IncludeBasicBidData()
+                    .FirstOrDefaultAsync();
+                var numOftendersOffers = await _tenderSubmitQuotationRepository.FindAsync(x => x.BidId == bid.Id && x.ProposalStatus == ProposalStatus.Delivered);
+                if (bid.isLimitedOffers == true && numOftendersOffers.Count() >= bid.limitedOffers)
+                    return OperationResult<BuyTermsBookResponseModel>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.BID_IS_LIMITED_OFFERS);
+
+                bool isCompanyBuyTermsBook = model.CompanyId is not null;
+                GetCompaniesToBuyTermsBookResponse company = null;
+                GetFreelancersToBuyTermsBookResponse freelancer = null;
+
+                if (isCompanyBuyTermsBook)
+                {
+                    var canCompanyBuyTermsBookValidationResult = await CanCompanyBuyTermsBook(bid, model.CompanyId);
+                    if (!canCompanyBuyTermsBookValidationResult.IsSucceeded)
+                        return OperationResult<BuyTermsBookResponseModel>.FailFrom(canCompanyBuyTermsBookValidationResult);
+
+                    company = canCompanyBuyTermsBookValidationResult.Data;
+                }
+                else if (!isCompanyBuyTermsBook && model.FreelancerId is not null)
+                {
+                    var canFreelancerBuyTermsBookValidationResult = await CanFreelancerBuyTermsBook(bid, model.FreelancerId);
+
+                    if (!canFreelancerBuyTermsBookValidationResult.IsSucceeded)
+                        return OperationResult<BuyTermsBookResponseModel>.Fail(canFreelancerBuyTermsBookValidationResult.HttpErrorCode, canFreelancerBuyTermsBookValidationResult.Code, canFreelancerBuyTermsBookValidationResult.ErrorMessage);
+
+                    freelancer = canFreelancerBuyTermsBookValidationResult.Data;
+                }
+
+                Donor donor = await _donorRepository.FindOneAsync(x => x.Id == bid.EntityId);
+                if (donor is null && bid.EntityType == UserType.Donor)
+                    return OperationResult<BuyTermsBookResponseModel>.Fail(HttpErrorCode.InvalidInput, BidErrorCodes.INVALID_BID);
+
+                if (!string.IsNullOrEmpty(model.CouponHash) && model.AddonsId != null)
+                    return OperationResult<BuyTermsBookResponseModel>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.YOU_CAN_NOT_USE_ADD_ON_WITH_A_COUPON);
+
+                var bidPricesResult = isCompanyBuyTermsBook ? await GetBidPrice(new GetBidDocumentsPriceRequestModel
+                {
+                    BidId = model.BidId,
+                    AddonsId = model.AddonsId,
+                    CouponHash = model.CouponHash,
+                    CompanyId = model.CompanyId,
+
+                }) : await GetBidPriceForFreelancer(new GetBidDocumentsPriceRequestModel
+                {
+                    BidId = model.BidId,
+                    AddonsId = model.AddonsId,
+                    CouponHash = model.CouponHash,
+                    FreelancerId = model.FreelancerId
+                });
+                if (!bidPricesResult.IsSucceeded)
+                    return OperationResult<BuyTermsBookResponseModel>.Fail(HttpErrorCode.InvalidInput, bidPricesResult.Code);
+
+                var bidPrices = bidPricesResult.Data;
+
+                if (!string.IsNullOrEmpty(model.CouponHash))
+                {
+                    var reservationResult = await _helperService.ReserveCoupon(model.CouponHash);
+                    if (!reservationResult.IsSucceeded)
+                    {
+                        _logger.Log(new LoggerModel
+                        {
+                            ExceptionError = null,
+                            UserRequestModel = null,
+                            ErrorMessage = $"Coupon reservationResult.IsNotSucceeded",
+                            ControllerAndAction = $"{nameof(BidService)}/{nameof(BuyTermsBook)}"
+                        });
+                    }
+                }
+
+                var currentSubscriptionAddOn = await _subscriptionPaymentRepository.Find(x => x.UserId == usr.CurrentOrgnizationId && ((model.CompanyId != null && x.UserTypeId == UserType.Company) || (model.FreelancerId != null && x.UserTypeId == UserType.Freelancer)) && x.IsPaymentConfirmed && !x.IsExpired
+                                                                                           && x.SubscriptionAddOns.Any(a => a.AddOnId == model.AddonsId && !a.IsExpired && a.IsPaymentConfirmed), true, false)
+                    .OrderByDescending(x => x.CreationDate)
+                    .Select(x => new
+                    {
+                        Id = x.SubscriptionAddOns.FirstOrDefault(a => a.AddOnId == model.AddonsId && !a.IsExpired && a.IsPaymentConfirmed).Id,
+                    })
+                    .FirstOrDefaultAsync();
+
+                if (model.AddonsId.HasValue && currentSubscriptionAddOn is null)
+                    return OperationResult<BuyTermsBookResponseModel>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.SELECTED_ADD_ON_IS_WRONG);
+
+                var paymentGatewaySettings = await _paymentGatewaySettingRepository.FindOneAsync(x => x.IsActive);
+                var generalSettings = await _appGeneralSettingsRepository.FindOneAsync(x => true);
+
+                var entity = _mapper.Map<ProviderBid>(model);
+                entity.CouponHash = bidPrices.CouponHash;
+                entity.SubscriptionAddonId = model.AddonsId.HasValue ? currentSubscriptionAddOn.Id : null;
+
+                entity.DiscountType = model.AddonsId.HasValue ? DiscountType.Addon : (bidPrices.CouponHash != null ? DiscountType.Coupon : null);
+                entity.Price = (double)bidPrices.Bid_Documents_Price;
+                entity.TanafosTaxesAmount = (double)bidPrices.TanafosTaxAfterDiscount;
+                entity.TanafosFeesAfterDiscount = (double)bidPrices.TanafosFeesAfterDiscount;
+                entity.AssociationFeesAfterDiscount = (double)bidPrices.AssociationFeesAfterDiscount;
+                entity.TransactionNumber = await GenerateTransactioNumber();
+                entity.CompanyId = company?.Id;
+                entity.FreelancerId = freelancer?.Id;
+                entity.CreatedBy = usr.Id;
+                entity.PaymentMethodId = ((int)paymentGatewaySettings.PaymentMethod);
+                entity.IsPaymentConfirmed = entity.Price == 0;
+                entity.IsRefunded = false;
+                entity.InvoiceId = null;
+                entity.UserType = usr.UserType == UserType.Provider ? UserType.Company : usr.UserType;
+                if (bid.EntityType == UserType.Association)
+                    MapProviderBidTaxes(generalSettings, bid.Association.HasTaxRecordNumber, entity, bid);
+                else if (bid.EntityType == UserType.Donor)
+                    MapProviderBidTaxes(generalSettings, donor.HasTaxRecordNumber, entity, bid);
+
+                await _providerBidRepository.AddThenDeAttach(entity);
+      
+
+                #region Is Free  
+                if (entity.IsPaymentConfirmed)
+                {
+                    entity.InvoiceId = await _invoiceService.GenerateBuyTenderDocInvoiceId();
+                    await _providerBidRepository.Update(entity);
+
+                    var invoicePdfResult = await _invoiceService.GenerateAndSaveBuyTenderDocInvoicePDF(bid, entity);
+                    if (!invoicePdfResult.IsSucceeded)
+                        return OperationResult<BuyTermsBookResponseModel>.Fail(invoicePdfResult.HttpErrorCode, invoicePdfResult.Code, invoicePdfResult.ErrorMessage);
+
+                    entity.SystemGeneratedInvoiceFileName = invoicePdfResult.Data.FileName;
+                    entity.SystemGeneratedInvoiceFilePath = invoicePdfResult.Data.FilePath;
+                    await _providerBidRepository.Update(entity);
+
+                    await LogBuyTenderTermsBookEvent(bid, entity, company?.Name ?? freelancer?.Name);
+                    //TODO
+                    await _pointEventService.AddPointEventUsageHistoryAsync(new AddPointEventUsageHistoryModel
+                    {
+                        PointType = PointTypes.BuyBidTermsBook,
+                        ActionId = bid.Id,
+                    });
+
+                    if (!string.IsNullOrEmpty(entity.CouponHash))
+                    {
+                        entity = await ApplyCouponIfExist(entity);
+                    }
+                    else if (entity.SubscriptionAddonId.HasValue)
+                    {
+                        var updateSubscripedAddOnResult = await _subscriptionAddonsService.UpdateAddOnUserAndAddUsageHistory(new UpdateAddOnAndAddUsageHistoryModel
+                        {
+                            EntityId = company?.Id ?? freelancer.Id,
+                            UserType = company != null ? UserType.Company : UserType.Freelancer,
+                            SubscriptionAddonId = entity.SubscriptionAddonId.Value,
+
+                            TotalBeforeDiscount = bidPrices.BidDocumentsPriceWithoutVatBeforeDiscount,
+                            DiscountQuantity = bidPrices.Discount,
+                            TotalAfterDiscount = bidPrices.Bid_Documents_Price,
+                            VatAmountAfterDiscount = bidPrices.TotalVat,
+                        });
+                        if (!updateSubscripedAddOnResult.IsSucceeded)
+                            return OperationResult<BuyTermsBookResponseModel>.Fail(updateSubscripedAddOnResult.HttpErrorCode, updateSubscripedAddOnResult.Code, updateSubscripedAddOnResult.ErrorMessage);
+
+                        entity.AddOnUsagesHistoryId = updateSubscripedAddOnResult.Data.Id;
+                        await _providerBidRepository.Update(entity);
+                    }
+
+                    if ((model.CompanyId != null || model.FreelancerId != null) && bid.IsApplyOfferWithSubscriptionMandatory == true)
+                    {
+                        var quotation = await _tenderSubmitQuotationRepository.FindOneAsync(x => x.BidId == entity.BidId
+                                && (x.CompanyId == entity.CompanyId || x.FreelancerId == entity.FreelancerId)
+                                && x.ProposalStatus == ProposalStatus.NotPaid, false, nameof(TenderSubmitQuotation.Company), nameof(TenderSubmitQuotation.Freelancer));
+                        if (quotation != null)
+                        {
+                            quotation.ProposalStatus = ProposalStatus.Delivered;
+                            await _tenderSubmitQuotationRepository.Update(quotation);
+                        }
+                        await _helperService.SendOfferEmailsAndNotifications(usr.Id, bid, quotation.Company, quotation, quotation.Freelancer);
+                    }
+
+                    var bidProviderEntityId = entity.CompanyId.HasValue ? entity.CompanyId.Value : entity.FreelancerId.Value;
+                    await _helperService.RevealBidAfterBuyingTermsBookIfAllowedAsync(entity.BidId, bidProviderEntityId, entity.UserType, BidRevealStatus.RevealedViaBuyTermsBook);
+
+                    using var scope = _serviceProvider.CreateScope();
+                    var financialTransactionService = scope.ServiceProvider.GetRequiredService<IFinancialTransactionPartiesPercentageService>();
+                    await financialTransactionService.SetFinancialTransactionPartiesPercentage(new SetFinancialTransactionPartiesPercentageRequest()
+                    {
+                        ServiceId = entity.Id,
+                        TransactionType = FinancialTransaction.BuyTermsPolicy,
+                        GatewayFees = 0,
+                        CardUsed = CardUsed.Free,
+                    });
+
+                    //TODO + Script + FreelanceBidIndustries
+                    await _channelWriterTenderDocs.WriteAsync(new GenerateTenderDocsPillModel() { bidProvider = entity, GeneralSettings = generalSettings, File = new FileResponse { FilePath = entity.SystemGeneratedInvoiceFilePath, FileName = entity.SystemGeneratedInvoiceFileName } });
+                    await _commonEmailAndNotificationService.SenfEmailToBidCreatorAndSuperAdminAndAdminsAfterBuyingTenderTerms(entity.BidId, company?.Name ?? freelancer.Name);
+
+                    var responseModel = new BuyTermsBookResponseModel
+                    {
+                        PaymentUrl = "",
+                        TransactionNumber = entity.TransactionNumber,
+                        PaymentEventResponse = await _helperService.GetBuyTermsBookPaymentResponse(entity.TransactionNumber, entity.CompanyId != null),
+                    };
+                    return OperationResult<BuyTermsBookResponseModel>.Success(responseModel);
+                }
+                #endregion
+
+                #region Payment
+                var paymentRequest = new PaymentRequestDto
+                {
+                    Amount = entity.Price,
+                    Currency = "SAR",
+                    Descriptions = PaymentServiceType.BUY_TERMS_BOOK.AsName(),
+                    transactionId = entity.TransactionNumber,
+                    BidId = model.BidId,
+                    CompanyId = company?.Id,
+                    PaymentServiceType = PaymentServiceType.BUY_TERMS_BOOK,
+                    EntityId = company != null ? company.Id : freelancer.Id,
+                    EntityType = company != null ? UserType.Company : UserType.Freelancer,
+                    HyperPayEntityIdType = model.EntityIdType
+                };
+                var result = await (await _paymentGatewayFactory.GetActivePaymentGateway()).GetPaymentUrl(paymentRequest);
+
+                var response = new BuyTermsBookResponseModel
+                {
+                    PaymentUrl = result.Data,
+                    TransactionNumber = entity.TransactionNumber
+                };
+                return OperationResult<BuyTermsBookResponseModel>.Success(response);
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = model,
+                    ErrorMessage = "Failed to Buy Terms Book!",
+                    ControllerAndAction = "BidController/BuyTermsBook"
+                });
+                if (!string.IsNullOrEmpty(model.CouponHash))
+                {
+                    try
+                    {
+                        await _helperService.ReleaseCouponReservation(model.CouponHash, $"Exception: {ex.Message}");
+                    }
+                    catch
+                    {
+                    }
+                }
+                return OperationResult<BuyTermsBookResponseModel>.Fail(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<GetCompaniesToBuyTermsBookResponse>> CanCompanyBuyTermsBook(Bid bid, long? companyId)
+        {
+            if (bid is null || bid.BidTypeId == (int)BidTypes.Freelancing)
+                return OperationResult<GetCompaniesToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, BidErrorCodes.INVALID_BID);
+
+            if (!bid.IsAbleToSubscribeToBid)
+                return OperationResult<GetCompaniesToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.SUBSCRIPTION_IN_THIS_BID_HAS_BEEN_SUSPENDED);
+
+            if (bid.BidTypeId != (int)BidTypes.Instant && ((DateTime)bid.BidAddressesTime.LastDateInOffersSubmission).Date < _dateTimeZone.CurrentDate.Date)
+                return OperationResult<GetCompaniesToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, BidErrorCodes.DATE_IS_GREATER_THAN_LAST_DATE_IN_OFFERS_SUBMISSION);
+
+            if (bid.BidStatusId != (int)TenderStatus.Open)
+                return OperationResult<GetCompaniesToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.YOU_CAN_DO_THIS_ACTION_ONLY_WHEN_BID_AT_OPEN_STATE);
+
+            var canCompanyBuyTermsBookValidationResult = await GetCurrentUserCompaniesToBuyTermsBookWithForbiddenReasonsIfFoundAsync(bid.Id, companyId);
+            if (!canCompanyBuyTermsBookValidationResult.IsSucceeded)
+                return OperationResult<GetCompaniesToBuyTermsBookResponse>.FailFrom(canCompanyBuyTermsBookValidationResult);
+
+            if (canCompanyBuyTermsBookValidationResult.Data.Count == 0 || canCompanyBuyTermsBookValidationResult.Data.Count > 1 || canCompanyBuyTermsBookValidationResult.Data.First().Id != companyId)
+                return OperationResult<GetCompaniesToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.COMPANY_NOT_FOUND);
+
+            var company = canCompanyBuyTermsBookValidationResult.Data.First();
+
+            var getConvinentErrorIfForbiddenReasonsFoundForCompanyToBuyTermsBookResult = GetConvinentErrorForBuyTermsBokkForbiddenReasons(company);
+            if (!getConvinentErrorIfForbiddenReasonsFoundForCompanyToBuyTermsBookResult.IsSucceeded)
+                return OperationResult<GetCompaniesToBuyTermsBookResponse>.Fail(getConvinentErrorIfForbiddenReasonsFoundForCompanyToBuyTermsBookResult.HttpErrorCode, getConvinentErrorIfForbiddenReasonsFoundForCompanyToBuyTermsBookResult.Code, getConvinentErrorIfForbiddenReasonsFoundForCompanyToBuyTermsBookResult.ErrorMessage);
+
+            return OperationResult<GetCompaniesToBuyTermsBookResponse>.Success(company);
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<GetFreelancersToBuyTermsBookResponse>> CanFreelancerBuyTermsBook(Bid bid, long? freelancerId)
+        {
+            if (bid is null || bid.BidTypeId != (int)BidTypes.Freelancing)
+                return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, BidErrorCodes.INVALID_BID);
+
+            if (!bid.IsAbleToSubscribeToBid)
+                return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.SUBSCRIPTION_IN_THIS_BID_HAS_BEEN_SUSPENDED);
+
+            if (bid.BidStatusId != (int)TenderStatus.Open)
+                return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.YOU_CAN_DO_THIS_ACTION_ONLY_WHEN_BID_AT_OPEN_STATE);
+
+            var canFreelancerBuyTermsBookValidationResult = await GetCurrentUserFreelancersToBuyTermsBookWithForbiddenReasonsIfFoundAsync(bid.Id, freelancerId);
+            if (!canFreelancerBuyTermsBookValidationResult.IsSucceeded)
+                return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(canFreelancerBuyTermsBookValidationResult.HttpErrorCode, canFreelancerBuyTermsBookValidationResult.Code, canFreelancerBuyTermsBookValidationResult.ErrorMessage);
+
+            if (canFreelancerBuyTermsBookValidationResult.Data !=null && canFreelancerBuyTermsBookValidationResult.Data.Id != freelancerId)
+                return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.InvalidInput, CommonErrorCodes.FREELANCER_NOT_FOUND);
+            
+
+            var getConvinentErrorIfForbiddenReasonsFoundForFreelancerToBuyTermsBookResult = GetConvinentErrorForBuyTermsBookForbiddenReasons(canFreelancerBuyTermsBookValidationResult.Data);
+            if (!getConvinentErrorIfForbiddenReasonsFoundForFreelancerToBuyTermsBookResult.IsSucceeded)
+                return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(getConvinentErrorIfForbiddenReasonsFoundForFreelancerToBuyTermsBookResult.HttpErrorCode, getConvinentErrorIfForbiddenReasonsFoundForFreelancerToBuyTermsBookResult.Code, getConvinentErrorIfForbiddenReasonsFoundForFreelancerToBuyTermsBookResult.ErrorMessage);
+
+            return OperationResult<GetFreelancersToBuyTermsBookResponse>.Success(canFreelancerBuyTermsBookValidationResult.Data);
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<string> GenerateTransactioNumber()
+        {
+            string nextNumber = "000001";
+            string randomNumber = _invoiceService.GenerateBaseInvoiceNumber(InvoiceType.BuyTenderDocsInvoice);
+            var getMaxTransactionNumber = await _providerBidRepository
+                                        .Find(x => x.TransactionNumber.ToLower().Length > 12)
+                                        .OrderByDescending(x => x.CreationDate)
+                                        .FirstOrDefaultAsync();
+            if (getMaxTransactionNumber is null)
+            {
+                randomNumber = randomNumber + nextNumber;
+            }
+            else
+            {
+                nextNumber = getMaxTransactionNumber.TransactionNumber.Substring(7);
+                nextNumber = (Convert.ToInt32(nextNumber) + 1).ToString();
+                nextNumber = nextNumber.PadLeft(6, '0');
+
+                randomNumber = randomNumber + nextNumber;
+            }
+
+            var checkTransactionNumber = await _providerBidRepository.FindOneAsync(x =>
+                          (string.Equals(x.TransactionNumber.ToLower(), randomNumber)));
+            do
+            {
+                if (checkTransactionNumber != null)
+                {
+                    nextNumber = (Convert.ToInt32(nextNumber) + 1).ToString();
+                    nextNumber = nextNumber.PadLeft(6, '0');
+
+                    randomNumber = randomNumber + nextNumber;
+                    checkTransactionNumber = await _providerBidRepository.FindOneAsync(x =>
+                                       (string.Equals(x.TransactionNumber.ToLower(), randomNumber)));
+                }
+            } while (checkTransactionNumber != null);
+
+            return randomNumber;
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<ReadOnlyGetBidPriceModel>> GetBidPrice(GetBidDocumentsPriceRequestModel request)
+        {
+            try
+            {
+                {
+                    if (_currentUserService.IsUserNotAuthorized(new List<UserType> { UserType.Provider, UserType.Freelancer }))
+                        return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotAuthorized, RegistrationErrorCodes.YOU_ARE_NOT_AUTHORIZED);
+                    var user = _currentUserService.CurrentUser;
+
+                    OperationResult<ReadOnlyGetBidPriceModel> result = null;
+                    if (user.UserType == UserType.Provider)
+                    {
+                        if ((!string.IsNullOrEmpty(request.CouponHash) && request.AddonsId is not null))
+                            return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.INVALID_INPUT);
+
+                        //Ask Eng/Faten
+                        if (request.CompanyId is not null)
+                        {
+                            var verifyResult = await VerifyCommercialRecordIfAutomatedRegistration(user,request.CompanyId);
+                            if (!verifyResult.IsSucceeded)
+                                return verifyResult;
+                        }
+
+                        var bid = await _bidRepository.FindOneAsync(x => x.Id == request.BidId, false, nameof(Bid.Association), nameof(Bid.Bid_Industries), nameof(Bid.BidRegions));
+                        if (bid is null)
+                            return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.BID_NOT_FOUND);
+
+                        var company = await _companyRepository.FindOneAsync(x => x.Id == request.CompanyId && user.OrgnizationType == (int)OrganizationType.Comapny, false);
+                        if (company is null && request.CompanyId is not null)
+                            return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.COMPANY_NOT_FOUND);
+                        var freelancer = await _freelancerRepository.FindOneAsync(x => x.Id == request.FreelancerId && user.OrgnizationType == (int)OrganizationType.Freelancer, false);
+                        if (freelancer is null && request.FreelancerId is not null)
+                            return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.FREELANCER_NOT_FOUND);
+                        if (request.AddonsId is not null)
+                        {
+                            var validationResponse = await _subscriptionAddonsService.ValidateAddOnForUser(new VaildateAddOnForUser
+                            {
+                                UserType = user.UserType == UserType.Provider ? UserType.Company : user.UserType,
+                                UserId = company?.Id ?? freelancer?.Id ?? 0,
+                                BidId = bid.Id,
+                                AddOnId = request.AddonsId ?? 0,
+                            });
+
+                            if (!validationResponse.IsSucceeded)
+                                return OperationResult<ReadOnlyGetBidPriceModel>.Fail(validationResponse.HttpErrorCode, validationResponse.Code, validationResponse.ErrorMessage);
+
+                            return await _subscriptionAddonsService.GetDocumentPrice(new GetDocumentPricAddOnForUser
+                            {
+                                bid = bid,
+                                UserType = user.UserType == UserType.Provider ? UserType.Company : user.UserType,
+                                UserId = company?.Id ?? freelancer?.Id ?? 0,
+                                AddOnId = request.AddonsId ?? 0
+                            });
+                        }
+                        else if (!string.IsNullOrEmpty(request.CouponHash))
+                        {
+                            var couponValidationResult = await _bidAndCouponServicesCommonMethods.CheckIfCouponIsValidAsync(new CheckIfCouponIsValidRequestModel
+                            {
+                                CouponHash = request.CouponHash,
+                                CouponType = CouponType.BidDocs,
+                                UserId = company?.Id ?? freelancer?.Id ?? 0,
+                                UserType = user.UserType == UserType.Provider ? UserType.Company : user.UserType,
+                                Price = bid.Association_Fees + bid.Tanafos_Fees,
+                            });
+                            if (!couponValidationResult.IsSucceeded)
+                                return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.InvalidInput, couponValidationResult.Code);
+
+                            var couponOfBidValidationResult = await _bidAndCouponServicesCommonMethods.CheckIfCouponOfBidIsValidAsync(request.CouponHash, bid);
+                            if (!couponOfBidValidationResult.IsSucceeded)
+                                return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.InvalidInput,couponOfBidValidationResult.Code);
+                        }
+
+                        result = await _bidAndCouponServicesCommonMethods.GetBidDocumentsPrice(request.CouponHash, bid);
+                    }
+
+                    else if (user.UserType == UserType.Freelancer)
+                        result = await GetBidPriceForFreelancer(request);
+
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to get bid Price!",
+                    ControllerAndAction = "BidController/GetBidPrice"
+                });
+                return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<ReadOnlyGetBidPriceModel>> GetBidPriceForFreelancer(GetBidDocumentsPriceRequestModel request)
+        {
+            try
+            {
+                {
+                    if (_currentUserService.IsUserNotAuthorized(new List<UserType> { UserType.Freelancer }))
+                        return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotAuthorized, RegistrationErrorCodes.YOU_ARE_NOT_AUTHORIZED);
+                    var user = _currentUserService.CurrentUser;
+
+                    if ((!string.IsNullOrEmpty(request.CouponHash) && request.AddonsId is not null))
+                        return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.INVALID_INPUT);
+
+                    var bid = await _bidRepository.FindOneAsync(x => x.Id == request.BidId, false, nameof(Bid.Association), nameof(Bid.FreelanceBidIndustries), nameof(Bid.BidRegions));
+                    if (bid is null)
+                        return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.BID_NOT_FOUND);
+
+                    var freelancer = await _freelancerRepository.FindOneAsync(x => x.Id == request.FreelancerId && user.OrgnizationType == (int)OrganizationType.Freelancer, false);
+                    if (freelancer is null)
+                        return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.FREELANCER_NOT_FOUND);
+
+                    if (request.AddonsId is not null)
+                    {
+                        var validationResponse = await _subscriptionAddonsService.ValidateAddOnForUser(new VaildateAddOnForUser
+                        {
+                            UserType = UserType.Freelancer,
+                            UserId = freelancer.Id,
+                            BidId = bid.Id,
+                            AddOnId = request.AddonsId ?? 0,
+                        });
+
+                        if (!validationResponse.IsSucceeded)
+                            return OperationResult<ReadOnlyGetBidPriceModel>.Fail(validationResponse.HttpErrorCode, validationResponse.Code, validationResponse.ErrorMessage);
+
+                        return await _subscriptionAddonsService.GetDocumentPrice(new GetDocumentPricAddOnForUser
+                        {
+                            bid = bid,
+                            UserType = UserType.Freelancer,
+                            UserId = freelancer.Id,
+                            AddOnId = request.AddonsId ?? 0
+                        });
+                    }
+                    else if (!string.IsNullOrEmpty(request.CouponHash))
+                    {
+                        var couponValidationResult = await _bidAndCouponServicesCommonMethods.CheckIfCouponIsValidAsync(new CheckIfCouponIsValidRequestModel
+                        {
+                            CouponHash = request.CouponHash,
+                            CouponType = CouponType.BidDocs,
+                            UserId = freelancer.Id,
+                            UserType = UserType.Freelancer,
+                            Price = bid.Association_Fees + bid.Tanafos_Fees,
+                        });
+                        if (!couponValidationResult.IsSucceeded)
+                            return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.InvalidInput, couponValidationResult.Code);
+
+                        var couponOfBidValidationResult = await _bidAndCouponServicesCommonMethods.CheckIfCouponOfBidIsValidAsync(request.CouponHash, bid);
+                        if (!couponOfBidValidationResult.IsSucceeded)
+                            return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.InvalidInput,couponOfBidValidationResult.Code);
+                    }
+
+                    return await _bidAndCouponServicesCommonMethods.GetBidDocumentsPrice(request.CouponHash, bid);
+                }
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to get bid Price!",
+                    ControllerAndAction = "BidController/GetBidPrice"
+                });
+                return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<BuyTenderDocsPillModel>> GetBuyTenderDocsPillModel(long providerBidId)
+        {
+            try
+            {
+                var providerBid = await _providerBidRepository.Find(x => x.Id == providerBidId)
+                                        .Include(a => a.Bid)
+                                        .Include(x=>x.Freelancer)
+                                        .Include(a => a.Company).ThenInclude(a => a.Region)
+                                        .Include(a => a.Company.Neighborhood)
+                                        .Include(a => a.ManualCompany)
+                                        .Include(a => a.CouponUsagesHistory)
+                                        .Include(a => a.AddOnUsagesHistory)
+                                        .FirstOrDefaultAsync();
+                if (providerBid is null)
+                    return OperationResult<BuyTenderDocsPillModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.NOT_FOUND);
+
+                var generalSettings = await _appGeneralSettingsRepository.FindOneAsync(x => true);
+                var docsPillModel = new BuyTenderDocsPillModel();
+
+                string transactionNumber = "";
+                var paymentBasicData = new PaymentTransactionBasicData { TransactionNumber = providerBid.TransactionNumber, PaymentMethod = (Nafes.CrossCutting.Model.Enums.PaymentMethod)providerBid.PaymentMethodId };
+                var payments = await _helperService.GetPaymentTransaction(new List<PaymentTransactionBasicData> { paymentBasicData });
+                if (payments.Count > 0)
+                    transactionNumber = payments.FirstOrDefault().TranRef;
+
+                //var transactionNumber =providerBid.PaymentMethodId==(int)(Nafes.CrossCutting.Model.Enums.PaymentMethod.PayTabs)?
+                //    await _payTabTransactionRepository.Find(x => x.CartId == providerBid.TransactionNumber).Select(x=>x.TranRef).FirstOrDefaultAsync():
+                //    await _hyperPayTransactionRepository.Find(x=>x.TransactionReference==providerBid.TransactionNumber).Select(x=>x.TransactionId).FirstOrDefaultAsync();
+
+                docsPillModel.BidName = providerBid.Bid.BidName;
+                docsPillModel.Ref_Number = providerBid.Bid.Ref_Number;
+                docsPillModel.TanafosTaxNumber = generalSettings.TanafosTaxNumber;
+                docsPillModel.PillNumber = string.IsNullOrEmpty(providerBid.InvoiceId) ? "-" : providerBid.InvoiceId;
+                docsPillModel.CommercialRecordNumber = providerBid.Company?.Commercial_record??providerBid.ManualCompany?.Commercial_record??providerBid.Freelancer?.FreelanceDocumentNumber;
+                docsPillModel.UniqueNumber700 = providerBid.Company?.UniqueNumber700 ?? providerBid.ManualCompany?.UniqueNumber700;
+                docsPillModel.CompanyName = providerBid.Company?.CompanyName??providerBid.ManualCompany?.CompanyName ?? providerBid.Freelancer?.Name;
+                docsPillModel.CompanyRegion = providerBid?.Company?.Region?.NameAr ?? providerBid?.Freelancer?.Region?.NameAr;
+                docsPillModel.BuyTenderDocsDate = providerBid.CreationDate.Date.ToString("dd/MM/yyyy");
+                docsPillModel.ContactUsMobile = generalSettings.ContactUsMobile;
+                docsPillModel.LogoBase64 = await _imageService.GetImage("Resources/staging-emails-templates/EmailTemplate/billlogo.png");
+                docsPillModel.TenderDocsPrice = providerBid.Bid.Association_Fees + providerBid.Bid.Tanafos_Fees;
+                docsPillModel.TenderDocsPriceFormatted = (providerBid.Bid.Association_Fees + providerBid.Bid.Tanafos_Fees).ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+                docsPillModel.ValueAddedTaxPercentage = (double)providerBid.TaxPercentage;
+                docsPillModel.ValueAddedTaxAmount = providerBid.Price - (double)_helperService.GetPriceAfterDeductingPercentage((decimal) providerBid.Price,(double) providerBid.TaxPercentage);
+                docsPillModel.ValueAddedTaxAmountFormatted = docsPillModel.ValueAddedTaxAmount.ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+                docsPillModel.TotalAmount = providerBid.Price;
+                docsPillModel.TotalAmountFormatted = providerBid.Price.ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+                docsPillModel.PayTabsTransactionNumber = transactionNumber;
+                docsPillModel.TaxRecordNumber = providerBid.Company?.HasTaxRecordNumber == true ? providerBid.Company.TaxRecordNumber : "-";
+                docsPillModel.TanafosCompanyFullName = generalSettings.TanafosCompanyFullName;
+                docsPillModel.TanafosCommericalRecordNo = generalSettings.TanafosCommericalRecordNo;
+                docsPillModel.TanafosBuildingNo = generalSettings.TanafosBuildingNo;
+                docsPillModel.TanafosStreetName = generalSettings.TanafosStreetName;
+                docsPillModel.TanafosNeighborhoodName = generalSettings.TanafosNeighborhoodName;
+                docsPillModel.TanafosCityName = generalSettings.TanafosCityName;
+                docsPillModel.TanafosCountryName = generalSettings.TanafosCountryName;
+                docsPillModel.TanafosPostalCode = generalSettings.TanafosPostalCode;
+                docsPillModel.TanafosAdditionalAddressNo = generalSettings.TanafosAdditionalAddressNo;
+                docsPillModel.TanafosAdditionalInfo = generalSettings.TanafosAdditionalInfo;
+                docsPillModel.CouponDiscount = providerBid.CouponUsagesHistory?.DiscountQuantity ?? 0;
+                docsPillModel.CouponDiscountFormatted = docsPillModel.CouponDiscount.ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+                docsPillModel.AddonsDiscount = providerBid.AddOnUsagesHistory is null ? 0 : providerBid.AddOnUsagesHistory.DiscountQuantity;
+                docsPillModel.AddonsDiscountFormatted = docsPillModel.AddonsDiscount.ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+                docsPillModel.TotalPriceAfterDiscountFormatted = (docsPillModel.TenderDocsPrice - Convert.ToDouble(docsPillModel.CouponDiscount) - Convert.ToDouble(docsPillModel.AddonsDiscount)).ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+                docsPillModel.PostalCode = providerBid.Company?.PostalCode ?? providerBid.Freelancer?.PostalCode ?? "-";
+                docsPillModel.CompanyNeighborhood = providerBid.Company?.Neighborhood?.NameAr ?? providerBid.Freelancer?.Neighborhood?.NameAr ?? "-";
+                docsPillModel.CompanyBuildingNo = providerBid.Company?.BuildingNo.HasValue==true ? providerBid.Company?.BuildingNo.Value.ToString() : "-";
+                docsPillModel.Saudi_Riyal = await _helperService.GetSaudiRiyalBase64Svg("#333");
+                return OperationResult<BuyTenderDocsPillModel>.Success(docsPillModel);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"provider Bid Id  = {providerBidId}",
+                    ErrorMessage = "Failed to Get Buy Tender Docs Pill Model!",
+                    ControllerAndAction = "BuyTenderDocsPillPdfController/GenerateTenderDocsPillPDF/{ProviderBidId}"
+                });
+                return OperationResult<BuyTenderDocsPillModel>.Fail(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private OperationResult<bool> GetConvinentErrorForBuyTermsBokkForbiddenReasons(GetCompaniesToBuyTermsBookResponse company)
+        {
+            if (company.IsAbleToBuy)
+                return OperationResult<bool>.Success(true);
+
+            if (company.BuyTermsBookForbiddenReasons.Any(x => x == BuyTermsBookForbiddenReasons.CompanyRegisterationExpiryDateIsExpired))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.COMMERCIAL_RECORD_IS_EXPIRED);//
+
+            else if (company.BuyTermsBookForbiddenReasons.Any(x => x == BuyTermsBookForbiddenReasons.CompanyIsNotAssignedByNonProfitEntity))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.COMPANY_NOT_ALLOWED);
+
+            else if (company.BuyTermsBookForbiddenReasons.Any(x => x == BuyTermsBookForbiddenReasons.CompanyNotInvitedInLimitedBid))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.COMPANY_NOT_ALLOWED);
+
+            else if (company.BuyTermsBookForbiddenReasons.Any(x => x == BuyTermsBookForbiddenReasons.UserNotHaveBuyTermsBookPermission))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.COMPANY_NOT_ALLOWED);//
+
+            else if (company.BuyTermsBookForbiddenReasons.Any(x => x == BuyTermsBookForbiddenReasons.CompanyBoughtTermsBookBefore))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, BidErrorCodes.YOU_BOUGHT_TERMS_BOOK_BEFORE);//
+
+            else if (company.BuyTermsBookForbiddenReasons.Any(x => x == BuyTermsBookForbiddenReasons.CompanyDelegationFileNotUploaded))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.DELEGATION_FILE_NOT_FOUND);
+
+            else if (company.BuyTermsBookForbiddenReasons.Any(x => x == BuyTermsBookForbiddenReasons.CompanyIsNotSubscribedInSystem))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.ACCOUNT_MUST_BE_SUBSCRIBED);//
+
+            return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.COMPANY_NOT_ALLOWED);
+        }
+
+        // Migrated from BidServiceCore
+        private OperationResult<bool> GetConvinentErrorForBuyTermsBookForbiddenReasons(GetFreelancersToBuyTermsBookResponse freelancer)
+        {
+            if (freelancer.IsAbleToBuy)
+                return OperationResult<bool>.Success(true);
+
+            if (freelancer.BuyTermsBookForbiddenReasons.Any(x => x == FreelancerBuyTermsBookForbiddenReasons.FreelancerRegisterationExpiryDateIsExpired))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.FREELANCER_DOCUMENT_IS_EXPIRED);
+
+
+            else if (freelancer.BuyTermsBookForbiddenReasons.Any(x => x == FreelancerBuyTermsBookForbiddenReasons.UserNotHaveBuyTermsBookPermission))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.FREELANCER_NOT_ALLOWED_TO_SUBSCRIBE_TO_BID);
+
+            else if (freelancer.BuyTermsBookForbiddenReasons.Any(x => x == FreelancerBuyTermsBookForbiddenReasons.FreelancerBoughtTermsBookBefore))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, BidErrorCodes.YOU_BOUGHT_TERMS_BOOK_BEFORE);
+
+            else if (freelancer.BuyTermsBookForbiddenReasons.Any(x => x == FreelancerBuyTermsBookForbiddenReasons.FreelancerIsNotSubscribedInSystem))
+                return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.ACCOUNT_MUST_BE_SUBSCRIBED); 
+            
+            return OperationResult<bool>.Fail(HttpErrorCode.Conflict, CommonErrorCodes.FREELANCER_NOT_ALLOWED_TO_SUBSCRIBE_TO_BID);
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<List<GetCompaniesToBuyTermsBookResponse>>> GetCurrentUserCompaniesToBuyTermsBookWithForbiddenReasonsIfFoundAsync(long bidId, long? currenctUserSpecificCompanyId = null)
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+                if (_currentUserService.IsUserNotAuthorized(new List<UserType> { UserType.Provider }))
+                    return OperationResult<List<GetCompaniesToBuyTermsBookResponse>>.Fail(HttpErrorCode.NotAuthorized, CommonErrorCodes.NotAuthorized);
+
+                var bid = await _bidRepository.Find(x => x.Id == bidId
+                && x.BidStatusId == (int)TenderStatus.Open)
+                    .Include(x => x.ProviderBids.Where(x => x.IsPaymentConfirmed))
+                    .Include(x => x.BidInvitations)
+                    .FirstOrDefaultAsync();
+
+                if (bid is null)
+                    return OperationResult<List<GetCompaniesToBuyTermsBookResponse>>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.BID_NOT_FOUND);
+
+                var userAssignedCompanOrgs = await _organizationUserRepository.Find(x => x.UserId == user.Id && x.Organization.OrgTypeID == OrganizationType.Comapny && !x.Organization.IsSusPend)
+                    .WhereIf(currenctUserSpecificCompanyId.HasValue, userOrg => userOrg.Organization.EntityID == currenctUserSpecificCompanyId.Value)
+                    .Include(x => x.Organization)
+                    .Include(x => x.ServiceClaimRoles)
+                    .ThenInclude(x => x.ServiceClaim)
+                    .AsSplitQuery()
+                    .ToListAsync();
+
+                var companyIds = userAssignedCompanOrgs.Select(x => x.Organization.EntityID);
+                var companies = await _companyRepository.Find(x => companyIds.Contains(x.Id) && x.CompanyRegistrationStatus != RegistrationStatus.NotReviewed && x.CompanyRegistrationStatus != RegistrationStatus.Rejected)
+                    .ToListAsync();
+
+                var res = new List<GetCompaniesToBuyTermsBookResponse>();
+                foreach (var company in companies)
+                {
+                    var userCompanyOrg = userAssignedCompanOrgs.FirstOrDefault(x => x.Organization.EntityID == company.Id);
+                    var obj = new GetCompaniesToBuyTermsBookResponse();
+
+                    obj.Id = company.Id;
+                    obj.Name = company.CompanyName;
+
+                    if (bid.ProviderBids.Any(x => x.CompanyId == company.Id))
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.CompanyBoughtTermsBookBefore);
+
+
+                    if (bid.BidTypeId == (int)BidTypes.Private && !bid.BidInvitations.Any(x => x.CompanyId == company.Id))
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.CompanyNotInvitedInLimitedBid);
+
+
+                    if (company.EstablishmentStatusId != (int)EstablishmentStatus.Active)
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.CompanyNotActive);
+
+                    if (string.IsNullOrEmpty(company.UniqueNumber700))
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.CompanyUniqueNumber700NotProvided);
+
+
+                    if (string.IsNullOrEmpty(company.DelegationFile))
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.CompanyDelegationFileNotUploaded);
+
+
+                    if (company.CompanyRegistrationStatus == RegistrationStatus.NotReviewed || company.CompanyRegistrationStatus == RegistrationStatus.Expire)
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.CompanyIsNotSubscribedInSystem);
+
+
+                    if (userCompanyOrg.ServiceClaimRoles.All(x => x.ServiceClaim.ClaimCode != ProviderClaimCodes.clm_3039.ToString()))
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.UserNotHaveBuyTermsBookPermission);
+
+                    if (bid.IsBidAssignedForAssociationsOnly && company.AssignedAssociationId is null && company.AssignedDonorId is null)
+                        obj.BuyTermsBookForbiddenReasons.Add(BuyTermsBookForbiddenReasons.CompanyIsNotAssignedByNonProfitEntity);
+
+
+                    obj.IsAbleToBuy = obj.BuyTermsBookForbiddenReasons.Count == 0;
+                    res.Add(obj);
+                }
+
+                return OperationResult<List<GetCompaniesToBuyTermsBookResponse>>.Success(res);
+
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"bidid = {bidId}",
+                    ErrorMessage = "Failed to Get Companies To Buy Terms Book Async!",
+                    ControllerAndAction = "bid/CompaniesToBuyTermsBookAsync"
+                });
+                return OperationResult<List<GetCompaniesToBuyTermsBookResponse>>.Fail(HttpErrorCode.ServerError, MarketCommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<GetFreelancersToBuyTermsBookResponse>> GetCurrentUserFreelancersToBuyTermsBookWithForbiddenReasonsIfFoundAsync(long bidId, long? freelancerId)
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+                if (_currentUserService.IsUserNotAuthorized(new List<UserType> { UserType.Freelancer }))
+                    return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.NotAuthorized, CommonErrorCodes.NotAuthorized);
+
+                var bid = await _bidRepository.Find(x => x.Id == bidId
+                && x.BidStatusId == (int)TenderStatus.Open)
+                    .Include(x => x.ProviderBids.Where(x => x.IsPaymentConfirmed))
+                    .Include(x => x.BidInvitations)
+                    .FirstOrDefaultAsync();
+
+                if (bid is null)
+                    return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.BID_NOT_FOUND);
+
+                var freelancer = await _freelancerRepository.Find(x => x.Id==freelancerId && x.RegistrationStatus != RegistrationStatus.NotReviewed && x.RegistrationStatus != RegistrationStatus.Rejected)
+                    .FirstOrDefaultAsync();
+
+                if (freelancer is null)
+                    return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.FREELANCER_NOT_FOUND);
+
+                var obj = new GetFreelancersToBuyTermsBookResponse();
+
+                    obj.Id = freelancer.Id;
+                    obj.Name = freelancer.Name;
+
+                    if (bid.ProviderBids.Any(x => x.FreelancerId == freelancer.Id))
+                        obj.BuyTermsBookForbiddenReasons.Add(FreelancerBuyTermsBookForbiddenReasons.FreelancerBoughtTermsBookBefore);
+
+                    if (freelancer.FreelanceDocumentExpirationDate < _dateTimeZone.CurrentDate)
+                        obj.BuyTermsBookForbiddenReasons.Add(FreelancerBuyTermsBookForbiddenReasons.FreelancerRegisterationExpiryDateIsExpired);
+
+                    if (freelancer.RegistrationStatus == RegistrationStatus.NotReviewed || freelancer.RegistrationStatus == RegistrationStatus.Expire)
+                        obj.BuyTermsBookForbiddenReasons.Add(FreelancerBuyTermsBookForbiddenReasons.FreelancerIsNotSubscribedInSystem);
+
+
+                var freelancerOrg =await _organizationUserRepository.Find(x => x.Organization.EntityID == freelancer.Id && x.Organization.OrgTypeID == OrganizationType.Freelancer)
+                                                                    .Include(x=>x.ServiceClaimRoles).ThenInclude(x=>x.ServiceClaim).FirstOrDefaultAsync();
+
+                if (freelancerOrg is null)
+                    return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.INVALID_ORGANIZATION);
+
+                if (freelancerOrg.ServiceClaimRoles.All(x => x.ServiceClaim.ClaimCode != FreelancerClaimCodes.clm_8001.ToString()))
+                        obj.BuyTermsBookForbiddenReasons.Add(FreelancerBuyTermsBookForbiddenReasons.UserNotHaveBuyTermsBookPermission);
+
+                    obj.IsAbleToBuy = obj.BuyTermsBookForbiddenReasons.Count == 0;
+                   
+               return OperationResult<GetFreelancersToBuyTermsBookResponse>.Success(obj);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"bidid = {bidId}",
+                    ErrorMessage = "Failed to Get Freelancers To Buy Terms Book Async!",
+                    ControllerAndAction = "bid/FreelancersToBuyTermsBookAsync"
+                });
+                return OperationResult<GetFreelancersToBuyTermsBookResponse>.Fail(HttpErrorCode.ServerError, MarketCommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<GetProviderDataOfRefundableCompanyBidModel>> GetProviderDataOfRefundableCompanyBid(long companyBidId)
+        {
+
+            var providerRefundRequest = await _providerRefundTransactionRepository.Find(x => x.ProviderBidId == companyBidId && x.withdrawStatusId == WithdrawStatus.Success)
+                .Include(x => x.ProviderBid)
+                .Include(x => x.ProviderBid.Bid)
+                .Include(x => x.ProviderBid.Company)
+                .Include(x => x.ProviderBid.Freelancer)
+                .Include(x => x.ProviderBid.Company.Region)
+                .Include(x => x.ProviderBid.Freelancer.Region)
+                .Include(x => x.ProviderBid.Company.Neighborhood)
+                .Include(x => x.ProviderBid.Freelancer.Neighborhood)
+                .Include(x => x.ProviderBid.Company.Provider)
+                .FirstOrDefaultAsync();
+
+            if (providerRefundRequest is null)
+                return OperationResult<GetProviderDataOfRefundableCompanyBidModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.NOT_FOUND);
+
+            var generalSettings = await _appGeneralSettingsRepository.FindOneAsync(x => true);
+
+            var res = new GetProviderDataOfRefundableCompanyBidModel();
+
+            res.CompanyName = providerRefundRequest.ProviderBid.GetBuyerTermsBookEntityName();
+            res.CompanyCountryName = "المملكة العربية السعودية";
+            res.CompanyCityName = providerRefundRequest.ProviderBid.Company?.Region?.NameAr ?? providerRefundRequest.ProviderBid.Freelancer?.Region?.NameAr ?? "-";
+            res.CompanyPostalCode = providerRefundRequest.ProviderBid.Freelancer?.PostalCode ?? "-";
+            res.CompanyNeighborhoodName = providerRefundRequest.ProviderBid.Company?.Neighborhood?.NameAr ?? providerRefundRequest.ProviderBid.Freelancer?.Neighborhood?.NameAr ?? "-";
+            res.CompanyStreetName = providerRefundRequest.ProviderBid.Company?.Street ?? providerRefundRequest.ProviderBid.Freelancer?.Street ?? "-";
+            res.CompanyBuildingNo = providerRefundRequest.ProviderBid.Company?.BuildingNo.Value.ToString() ?? "-";
+            res.CompanyTaxNumber = providerRefundRequest.ProviderBid.Company?.TaxRecordNumber ?? providerRefundRequest.ProviderBid.Freelancer?.FreelanceDocumentNumber ?? "-";
+            res.PillNumber = string.IsNullOrEmpty(providerRefundRequest.TransactionNumber) ? "-" : providerRefundRequest.TransactionNumber;
+            res.CompanyAdditionalInfo = "-";
+            res.CompanyAdditionalAddressNo = "-";
+            res.Bid_Ref_Number = providerRefundRequest.ProviderBid.Bid.Ref_Number;
+
+            res.CreationDate = providerRefundRequest.CreationDate;
+
+            res.TenderDocsAmountWithoutTax = (providerRefundRequest.ProviderBid.Price - (providerRefundRequest.ProviderBid.TanafosTaxesAmount + providerRefundRequest.ProviderBid.AssociationTaxesAmount));
+            res.TenderDocsAmountWithoutTaxFormatted = res.TenderDocsAmountWithoutTax.ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+
+            res.TenderDocsAmountWithTax = providerRefundRequest.ProviderBid.Price;
+            res.TenderDocsAmountWithTaxFormatted = res.TenderDocsAmountWithTax.ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+
+            res.TaxAmount = (providerRefundRequest.ProviderBid.TanafosTaxesAmount + providerRefundRequest.ProviderBid.AssociationTaxesAmount);
+            res.TaxAmountFormatted = res.TaxAmount.ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+            res.TaxPercentage = ((res.TaxAmount * 100) / res.TenderDocsAmountWithoutTax).ToTwoDigitsAfterDecimalPointWithThousandSeperator();
+            res.RefundedAmountToAddon = providerRefundRequest.ProviderBid?.AddOnUsagesHistory?.DiscountQuantity??0;
+            res.ContactUsMobile = generalSettings.ContactUsMobile;
+            res.TanafosTaxNumber = generalSettings.TanafosTaxNumber;
+            res.TanafosCompanyFullName = generalSettings.TanafosCompanyFullName;
+            res.TanafosCommericalRecordNo = generalSettings.TanafosCommericalRecordNo;
+            res.TanafosBuildingNo = generalSettings.TanafosBuildingNo;
+            res.TanafosStreetName = generalSettings.TanafosStreetName;
+            res.TanafosNeighborhoodName = generalSettings.TanafosNeighborhoodName;
+            res.TanafosCityName = generalSettings.TanafosCityName;
+            res.TanafosCountryName = generalSettings.TanafosCountryName;
+            res.TanafosPostalCode = generalSettings.TanafosPostalCode;
+            res.TanafosAdditionalAddressNo = generalSettings.TanafosAdditionalAddressNo;
+            res.TanafosAdditionalInfo = generalSettings.TanafosAdditionalInfo;
+            res.Logo_Image = await _imageService.GetImage("Resources/staging-emails-templates/EmailTemplate/billlogo.png");
+            res.Saudi_Riyal = await _helperService.GetSaudiRiyalBase64Svg("#333");
+
+            
+            return OperationResult<GetProviderDataOfRefundableCompanyBidModel>.Success(res);
+        }
+
+        // Migrated from BidServiceCore
+        private async Task LogBuyTenderTermsBookEvent(Bid bid, ProviderBid providerBid, string entityName)
+        {
+            //===============log event===============
+
+            string[] styles = await _helperService.GetEventStyle( EventTypes.BuyTenderTermsBook);
+            await _helperService.LogBidEvents(new BidEventModel
+            {
+                BidId = bid.Id,
+                BidStatus = (TenderStatus)bid.BidStatusId,
+                BidEventSection = BidEventSections.Bid,
+                BidEventTypeId = (int)EventTypes.BuyTenderTermsBook,
+                EventCreationDate = _dateTimeZone.CurrentDate,
+                ActionId = bid.Id,
+                Audience = AudienceTypes.All,
+                CompanyId = providerBid.CompanyId ?? 0 ,
+                FreelancerId = providerBid.FreelancerId?? 0,
+                Header = string.Format(styles[0], fileSettings.ONLINE_URL, providerBid.CompanyId ?? providerBid.FreelancerId, entityName, providerBid.CreationDate.ToString("dddd d MMMM، yyyy , h:mm tt", new CultureInfo("ar-AE")), providerBid.CompanyId is not null ? UserType.Provider : UserType.Freelancer),
+                Notes1 = string.Format(styles[1], fileSettings.ONLINE_URL, providerBid.CompanyId ?? providerBid.FreelancerId, entityName, providerBid.CompanyId is not null ? UserType.Provider : UserType.Freelancer)
+            });
+        }
+
+        // Migrated from BidServiceCore
+        private static void MapProviderBidTaxes(AppGeneralSetting generalSettings, bool? HasTaxRecordNumber, ProviderBid entity, Bid bid)
+        {
+            double AssociationFees = bid.Association_Fees;
+            double TanafosFees = bid.Tanafos_Fees;
+            if (!string.IsNullOrEmpty(entity.CouponHash) || entity.SubscriptionAddonId.HasValue)
+            {
+                AssociationFees = entity.AssociationFeesAfterDiscount;
+                TanafosFees = entity.TanafosFeesAfterDiscount;
+            }
+
+            entity.TaxPercentage = (decimal)generalSettings.VATPercentage;
+            entity.TotalAssociationTaxAmount = (decimal)((generalSettings.VATPercentage / 100) * AssociationFees);
+            if (HasTaxRecordNumber == true)
+            {
+                entity.AssociationTaxesAmount = (generalSettings.VATPercentage / 100) * AssociationFees;
+                entity.TanafosTaxesAmount = (generalSettings.VATPercentage / 100) * TanafosFees;
+            }
+            if (HasTaxRecordNumber == false || HasTaxRecordNumber == null)
+            {
+                entity.AssociationTaxesAmount = 0;
+                entity.TanafosTaxesAmount = (AssociationFees + TanafosFees) * (generalSettings.VATPercentage / 100);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<ReadOnlyGetBidPriceModel>> VerifyCommercialRecordIfAutomatedRegistration(ApplicationUser usr, long? CompanyId)
+        {
+            var integrativeService = await _integrativeServicesRepository.FindOneAsync(x => true);
+            if (integrativeService is not null && integrativeService.AutomatedProviderRegistration)
+            {
+
+                var company = await _companyRepository.Find(x => x.Id == CompanyId)
+                    .FirstOrDefaultAsync();
+
+                if(company is null)
+                    return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.COMPANY_NOT_FOUND);
+
+                if (string.IsNullOrEmpty(company.UniqueNumber700) || company.EstablishmentStatusId != (int)EstablishmentStatus.Active)
+                    return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.NotFound, CommonErrorCodes.CR_NATIONAL_NUMBER_CAN_NOT_BE_NULL);
+
+                var validationResult = await _companyNICService.CheckIfCommercialRecordIsValid(company.UniqueNumber700);
+                if (!validationResult.IsSucceeded || !validationResult.Data.IsValid || validationResult.Data.Status is null)
+                    return OperationResult<ReadOnlyGetBidPriceModel>.Fail(HttpErrorCode.Conflict, validationResult.Code);
+
+
+            }
+            return OperationResult<ReadOnlyGetBidPriceModel>.Success(null);
+        }

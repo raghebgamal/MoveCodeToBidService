@@ -1,0 +1,2024 @@
+
+
+        // Migrated from BidServiceCore
+        private async Task<IQueryable<Bid>> ApplyFiltrationForBids(FilterBidsSearchModel model, IQueryable<Bid> bids,bool getFreelancingBids=false)
+        {
+            if (model.IsBidAssignedForAssociationsOnly)
+                bids = bids.Where(b => b.IsBidAssignedForAssociationsOnly);
+
+            if (!string.IsNullOrEmpty(model.BiddingName))
+                bids = bids.Where(b => b.BidName.Contains(model.BiddingName));
+
+            bids = bids.WhereIf(!string.IsNullOrEmpty(model.SearchQuery),
+                b => DbFunctions.NormalizeArabic(b.Donor.DonorName).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)) ||
+                   DbFunctions.NormalizeArabic(b.Association.Association_Name).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)) ||
+                   DbFunctions.NormalizeArabic(b.BidName).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)) ||
+                   DbFunctions.NormalizeArabic(b.Ref_Number).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)));
+
+            if (!string.IsNullOrEmpty(model.AssociationName))
+            {
+                var donorsWithSameName = await _donorRepository.Find(a => a.DonorName.Contains(model.AssociationName)).Select(a => a.Id).ToListAsync();
+
+                bids = bids.Where(b => (b.EntityType == UserType.Association && b.Association.Association_Name.Contains(model.AssociationName))
+                                    || (b.EntityType == UserType.Donor && donorsWithSameName.Contains(b.EntityId)));
+            }
+            if (!string.IsNullOrEmpty(model.BidTypeId))
+            {
+                var typeArrayAsString = model.BidTypeId.Split(',');
+                int[] typesArray = Array.ConvertAll(typeArrayAsString, int.Parse);
+                bids = bids.Where(b => typesArray.Contains((int)b.BidTypeId));
+            }
+
+            if (!string.IsNullOrEmpty(model.BidStatusId))
+            {
+                var statusArrayAsString = model.BidStatusId.Split(',');
+                int[] statusArray = Array.ConvertAll(statusArrayAsString, int.Parse);
+                bids = bids.Where(b => statusArray.Contains((int)b.BidStatusId));
+            }
+
+            if (!string.IsNullOrEmpty(model.RegionId))
+            {
+                var regionsIdAsString = model.RegionId.Split(',');
+                int[] regionsId = Array.ConvertAll(regionsIdAsString, int.Parse);
+                bids = bids.Where(b => b.BidRegions.Any(a => regionsId.Contains(a.RegionId)));
+            }
+
+            if ((!string.IsNullOrEmpty(model.BidMainClassificationId) && !getFreelancingBids) || !string.IsNullOrEmpty(model.FreelancingBidMainClassificationId))
+            {
+                if ((!string.IsNullOrEmpty(model.BidMainClassificationId) && !getFreelancingBids) && string.IsNullOrEmpty(model.FreelancingBidMainClassificationId))
+                {
+                    var statusArrayAsString = model.BidMainClassificationId.Split(',');
+                    int[] statusArray = Array.ConvertAll(statusArrayAsString, int.Parse);
+
+                    bids = bids.Where(b => b.Bid_Industries.Any(a => statusArray.Contains((int)a.CommercialSectorsTreeId)));
+                }
+
+                else if ((string.IsNullOrEmpty(model.BidMainClassificationId)) && !string.IsNullOrEmpty(model.FreelancingBidMainClassificationId))
+                {
+                    var statusArrayAsString = model.FreelancingBidMainClassificationId.Split(',');
+                    int[] statusArray = Array.ConvertAll(statusArrayAsString, int.Parse);
+
+                    bids = bids.Where(b => b.FreelanceBidIndustries.Any(a => statusArray.Contains((int)a.FreelanceWorkingSectorId)));
+                }
+
+                if ((!string.IsNullOrEmpty(model.BidMainClassificationId) && !getFreelancingBids) && !string.IsNullOrEmpty(model.FreelancingBidMainClassificationId))
+                {
+                    var statusArrayAsString = model.BidMainClassificationId.Split(',');
+                    int[] statusArray = Array.ConvertAll(statusArrayAsString, int.Parse);
+
+                    List<int> bidMainClassificationIds = model.BidMainClassificationId.Split(',').Select(int.Parse).ToList();
+
+                    List<int> freelancingBidMainClassificationIds = model.FreelancingBidMainClassificationId.Split(',').Select(int.Parse).ToList();
+
+
+                    bids = bids.Where(b =>(bidMainClassificationIds.Any() && b.Bid_Industries.Any(a => bidMainClassificationIds.Contains((int)a.CommercialSectorsTreeId)))
+                                       || (freelancingBidMainClassificationIds.Any() && b.FreelanceBidIndustries.Any(a => freelancingBidMainClassificationIds.Contains((int)a.FreelanceWorkingSectorId))) );
+                }
+            }
+
+            if (!string.IsNullOrEmpty(model.BiddingRefNumber))
+                bids = bids.Where(b => b.Ref_Number.Contains(model.BiddingRefNumber));
+
+            if (model.PublishDateFrom != null && model.PublishDateFrom != default)
+                bids = bids.Where(b => DateTime.Compare(b.CreationDate.Date, model.PublishDateFrom.Value.Date) >= 0);
+
+            if (model.PublishDateTo != null && model.PublishDateTo != default)
+                bids = bids.Where(b => DateTime.Compare(b.CreationDate.Date, model.PublishDateTo.Value.Date) <= 0);
+
+            if (model.OfferSubmissionDateFrom != null && model.OfferSubmissionDateFrom != default)
+                bids = bids.Where(b => DateTime.Compare(((DateTime)b.BidAddressesTime.LastDateInOffersSubmission).Date, model.OfferSubmissionDateFrom.Value.Date) >= 0);
+
+            if (model.OfferSubmissionDateTo != null && model.OfferSubmissionDateTo != default)
+                bids = bids.Where(b => DateTime.Compare(((DateTime)b.BidAddressesTime.LastDateInOffersSubmission).Date, model.OfferSubmissionDateTo.Value.Date) <= 0);
+
+            //if (model.TermsBookPriceId != null)
+            //{
+            //    switch (model.TermsBookPriceId)
+            //    {
+            //        case (int)TermsBookPrice.Free:
+            //            bids = bids.Where(a => a.Bid_Documents_Price == 0);
+            //            break;
+            //        case (int)TermsBookPrice.p1_1000:
+            //            bids = bids.Where(a => a.Bid_Documents_Price >= 1 && a.Bid_Documents_Price <= 1000);
+            //            break;
+            //        case (int)TermsBookPrice.p1001_10000:
+            //            bids = bids.Where(a => a.Bid_Documents_Price >= 1001 && a.Bid_Documents_Price <= 10000);
+            //            break;
+            //        case (int)TermsBookPrice.p10001_20000:
+            //            bids = bids.Where(a => a.Bid_Documents_Price >= 10001 && a.Bid_Documents_Price <= 20000);
+            //            break;
+            //        case (int)TermsBookPrice.p20001_40000:
+            //            bids = bids.Where(a => a.Bid_Documents_Price >= 20001 && a.Bid_Documents_Price <= 40000);
+            //            break;
+            //        case (int)TermsBookPrice.p40001_50000:
+            //            bids = bids.Where(a => a.Bid_Documents_Price >= 40001 && a.Bid_Documents_Price <= 50000);
+            //            break;
+            //        case (int)TermsBookPrice.greater50000:
+            //            bids = bids.Where(a => a.Bid_Documents_Price > 50000);
+            //            break;
+            //        default:
+            //            break;
+            //    }
+            //}
+           
+            bids = bids.WhereIf(model.CreatorType != null, b => b.EntityType == model.CreatorType.Value);
+
+
+            if (model.CancelDateFrom != null && model.CancelDateFrom != default)
+                bids = bids.Where(b => b.CancelDate.Value.Date >= model.CancelDateFrom.Value.Date);
+
+            if (model.CancelDateTo != null && model.CancelDateTo != default)
+                bids = bids.Where(b => b.CancelDate.Value.Date <= model.CancelDateTo.Value.Date);
+
+
+            if (model.ActualAnchoringDateFrom != null && model.ActualAnchoringDateFrom != default)
+                bids = bids.Where(b => b.ActualAnchoringDate.Value.Date >= model.ActualAnchoringDateFrom.Value.Date);
+
+            if (model.ActualAnchoringDateTo != null && model.ActualAnchoringDateTo != default)
+                bids = bids.Where(b => b.ActualAnchoringDate.Value.Date <= model.ActualAnchoringDateTo.Value.Date);
+
+            var termsBookPriceArray = !string.IsNullOrWhiteSpace(model.TermsBookPrice) && model.TermsBookPrice.Contains(',')
+                                      ? model.TermsBookPrice.Split(',')
+                                           .Select(s => s.Trim())
+                                           .Where(s => int.TryParse(s, out _))
+                                           .Select(int.Parse)
+                                           .ToList()
+                                      : new List<int>();
+
+            if (termsBookPriceArray.Count > 1)
+            {
+                bids = bids.Where(a => a.Bid_Documents_Price >= termsBookPriceArray[0] &&
+                                      a.Bid_Documents_Price <= termsBookPriceArray[1]);
+            }
+
+            return bids;
+        }
+
+        // Migrated from BidServiceCore
+        private static IQueryable<ProviderBid> ApplyFiltrationForProviderBids(FilterBidsSearchModel model, IQueryable<ProviderBid> providerBids, UserType userType)
+        {
+            if (model.IsBidAssignedForAssociationsOnly)
+                providerBids = providerBids.Where(b => b.Bid.IsBidAssignedForAssociationsOnly);
+
+            if (!string.IsNullOrEmpty(model.BiddingName))
+                providerBids = providerBids.Where(b => b.Bid.BidName.Contains(model.BiddingName));
+
+            if (!string.IsNullOrEmpty(model.AssociationName))
+                providerBids = providerBids.Where(b => b.Bid.Association.Association_Name.Contains(model.AssociationName));
+
+            providerBids = providerBids.WhereIf(!string.IsNullOrEmpty(model.SearchQuery),
+                 b => DbFunctions.NormalizeArabic(b.Bid.Donor.DonorName).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)) ||
+                    DbFunctions.NormalizeArabic(b.Bid.Association.Association_Name).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)) ||
+                    DbFunctions.NormalizeArabic(b.Bid.BidName).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)) ||
+                    DbFunctions.NormalizeArabic(b.Bid.Ref_Number).Contains(DbFunctions.NormalizeArabic(model.SearchQuery)));
+            if (!string.IsNullOrEmpty(model.BidTypeId))
+            {
+                var typeArrayAsString = model.BidTypeId.Split(',');
+                int[] typesArray = Array.ConvertAll(typeArrayAsString, int.Parse);
+                providerBids = providerBids.Where(b => typesArray.Contains((int)b.Bid.BidTypeId));
+            }
+
+            if (!string.IsNullOrEmpty(model.BidStatusId))
+            {
+                var statusArrayAsString = model.BidStatusId.Split(',');
+                int[] statusArray = Array.ConvertAll(statusArrayAsString, int.Parse);
+                providerBids = providerBids.Where(b => statusArray.Contains((int)b.Bid.BidStatusId));
+            }
+
+            if (!string.IsNullOrEmpty(model.RegionId))
+            {
+                var regionsIdAsString = model.RegionId.Split(',');
+                int[] regionsId = Array.ConvertAll(regionsIdAsString, int.Parse);
+                providerBids = providerBids.Where(b => b.Bid.BidRegions.Any(a => regionsId.Contains(a.RegionId)));
+            }
+
+            if (!string.IsNullOrEmpty(model.BidMainClassificationId))
+            {
+                var statusArrayAsString = model.BidMainClassificationId.Split(',');
+                int[] statusArray = Array.ConvertAll(statusArrayAsString, int.Parse);
+                providerBids = providerBids.Where(b => b.Bid.Bid_Industries.Any(a => statusArray.Contains((int)a.CommercialSectorsTreeId)));
+            }
+            if (!string.IsNullOrEmpty(model.FreelancingBidMainClassificationId))
+            {
+                var statusArrayAsString = model.FreelancingBidMainClassificationId.Split(',');
+                int[] statusArray = Array.ConvertAll(statusArrayAsString, int.Parse);
+                providerBids = providerBids.Where(b => b.Bid.FreelanceBidIndustries.Any(a => statusArray.Contains((int)a.FreelanceWorkingSectorId))) ;
+            }
+          
+
+            if (!string.IsNullOrEmpty(model.BiddingRefNumber))
+                providerBids = providerBids.Where(b => b.Bid.Ref_Number.Contains(model.BiddingRefNumber));
+
+            if (model.PublishDateFrom != null && model.PublishDateFrom != default)
+                providerBids = providerBids.Where(b => DateTime.Compare(b.Bid.CreationDate.Date, model.PublishDateFrom.Value.Date) >= 0);
+
+            if (model.PublishDateTo != null && model.PublishDateTo != default)
+                providerBids = providerBids.Where(b => DateTime.Compare(b.Bid.CreationDate.Date, model.PublishDateTo.Value.Date) <= 0);
+
+            if (model.OfferSubmissionDateFrom != null && model.OfferSubmissionDateFrom != default)
+                providerBids = providerBids.Where(b => DateTime.Compare(((DateTime)b.Bid.BidAddressesTime.LastDateInOffersSubmission).Date, model.OfferSubmissionDateFrom.Value.Date) >= 0);
+
+            if (model.OfferSubmissionDateTo != null && model.OfferSubmissionDateTo != default)
+                providerBids = providerBids.Where(b => DateTime.Compare(((DateTime)b.Bid.BidAddressesTime.LastDateInOffersSubmission).Date, model.OfferSubmissionDateTo.Value.Date) <= 0);
+
+
+            if (model.TermsBookPriceId != null)
+            {
+                switch (model.TermsBookPriceId)
+                {
+                    case (int)TermsBookPrice.Free:
+                        providerBids = providerBids.Where(a => a.Price == 0);
+                        break;
+                    case (int)TermsBookPrice.p1_1000:
+                        providerBids = providerBids.Where(a => a.Price >= 1 && a.Price <= 1000);
+                        break;
+                    case (int)TermsBookPrice.p1001_10000:
+                        providerBids = providerBids.Where(a => a.Price >= 1001 && a.Price <= 10000);
+                        break;
+                    case (int)TermsBookPrice.p10001_20000:
+                        providerBids = providerBids.Where(a => a.Price >= 10001 && a.Price <= 20000);
+                        break;
+                    case (int)TermsBookPrice.p20001_40000:
+                        providerBids = providerBids.Where(a => a.Price >= 20001 && a.Price <= 40000);
+                        break;
+                    case (int)TermsBookPrice.p40001_50000:
+                        providerBids = providerBids.Where(a => a.Price >= 40001 && a.Price <= 50000);
+                        break;
+                    case (int)TermsBookPrice.greater50000:
+                        providerBids = providerBids.Where(a => a.Price > 50000);
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+            if (model.CancelDateFrom != null && model.CancelDateFrom != default)
+                providerBids = providerBids.Where(b => b.Bid.CancelDate.Value.Date >= model.CancelDateFrom.Value.Date);
+
+            if (model.CancelDateTo != null && model.CancelDateTo != default)
+                providerBids = providerBids.Where(b => b.Bid.CancelDate.Value.Date <= model.CancelDateTo.Value.Date);
+
+
+            if (model.ActualAnchoringDateFrom != null && model.ActualAnchoringDateFrom != default)
+                providerBids = providerBids.Where(b => b.Bid.ActualAnchoringDate.Value.Date >= model.ActualAnchoringDateFrom.Value.Date);
+
+            if (model.ActualAnchoringDateTo != null && model.ActualAnchoringDateTo != default)
+                providerBids = providerBids.Where(b => b.Bid.ActualAnchoringDate.Value.Date <= model.ActualAnchoringDateTo.Value.Date);
+            return providerBids;
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<GetMyBidResponse>>> GetAllBids(FilterBidsSearchModel request)
+        {
+            try
+            {
+                if (request.PublishDateFrom > request.PublishDateTo)
+                    return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(HttpErrorCode.InvalidInput, BidErrorCodes.PUBLISH_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_PUBLISH_DATE_TO);
+                if (request.OfferSubmissionDateFrom > request.OfferSubmissionDateTo)
+                    return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(HttpErrorCode.InvalidInput, BidErrorCodes.OFFER_SUBMISSION_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_OFFER_SUBMISSION_DATE_TO);
+
+                var user = _currentUserService.CurrentUser;
+                await _bidSearchLogService.AddBidSearcLogAsync(request, user);
+
+                if (user is null)
+                    return await GetAllBidsForVisitor(request);
+
+                var administrationUserTypes = Constants.AdminstrationUserTypes;
+                var isAdminHasBidClaim = user.UserType == UserType.Admin ? await _helperService.CheckIfUserHasSpecificClaims(new List<string>() { AdminClaimCodes.clm_2553.AsName() }, user) : false;
+
+                IQueryable<Bid> bids = _bidRepository.Find(x => !x.IsDeleted, true, false)
+                   .WhereIf(!isAdminHasBidClaim && user.UserType == UserType.Admin, x => x.BidStatusId != (int)TenderStatus.Draft)
+                   .WhereIf(!administrationUserTypes.Contains(user.UserType), x => !x.IsBidHidden)
+                   .WhereIf(user.UserType == UserType.Freelancer, x => (BidTypes)x.BidTypeId == BidTypes.Freelancing)
+                   .WhereIf(user.UserType == UserType.Provider, x => (BidTypes)x.BidTypeId != BidTypes.Freelancing)
+                   .WhereIf(user.UserType == UserType.SupportMember || user.UserType == UserType.SupportManager, b => b.BidStatusId != (int)TenderStatus.Draft)
+                   .WhereIf(user.UserType == UserType.Supervisors, b => b.BidStatusId != (int)TenderStatus.Draft && b.BidStatusId != (int)TenderStatus.Reviewing && b.BidStatusId != (int)TenderStatus.Pending);
+
+                if (user.UserType == UserType.Freelancer || (user.UserType == UserType.Provider && user.OrgnizationType == (int)OrganizationType.Comapny))
+                    return await GetAllBidsForBidParticipants(request, bids,user);
+
+
+                Association association = null;
+                Donor donor = null;
+
+                if (user.UserType == UserType.Association || user.UserType == UserType.Donor)
+                {
+                    if (user.UserType == UserType.Association)
+                    {
+                        association = await _associationService.GetUserAssociation(user.Email);
+                        if (association is null)
+                            return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(HttpErrorCode.NotFound, CommonErrorCodes.ASSOCIATION_NOT_FOUND);
+
+                        bids = bids.Union(GetPrivateBidsForCurrentAssociation(association.Id, user.CurrentOrgnizationId));
+                    }
+
+                    if (user.UserType == UserType.Donor)
+                    {
+                        donor = await _donorRepository.FindOneAsync(don => don.Id == user.CurrentOrgnizationId && don.isVerfied && !don.IsDeleted);
+                        if (donor == null)
+                            return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(HttpErrorCode.NotFound, CommonErrorCodes.DONOR_NOT_FOUND);
+
+                        bids = bids.Union(GetPrivateBidsForCurrentDonor(donor.Id, user.CurrentOrgnizationId)); 
+                        bids = bids.Union(GetPrivateBidsForSupervisorDonor(donor.Id));
+                    }
+
+                    var othersDraftedBids = bids
+                        .Where(bid => bid.BidStatusId == (int)TenderStatus.Draft && (bid.EntityId != user.CurrentOrgnizationId || bid.EntityType != user.UserType));
+                    bids = bids.Where(b => !othersDraftedBids.Any(x => x.Id == b.Id));
+
+                    var reviewingBidsOfCurrentEntity = bids.Where(x => x.BidStatusId == (int)TenderStatus.Reviewing && x.EntityId == user.CurrentOrgnizationId && x.EntityType == user.UserType);
+                    bids = bids.Where(b => b.BidStatusId != (int)TenderStatus.Reviewing);
+                    bids = bids.Union(reviewingBidsOfCurrentEntity);
+
+                    var IsUserHasCreateBidClaim = await _helperService.CheckIfUserHasSpecificClaims(new List<string> { Constants.AssociationCreateBidClaim, Constants.DonorCreateBidClaim }, user);
+                    bids = IsUserHasCreateBidClaim ? bids : bids.Where(x => x.BidStatusId != (int)TenderStatus.Draft);
+                }
+
+
+                bids = await ApplyFiltrationForBids(request, bids);
+                var totalRecords = await bids.Distinct().CountAsync();
+                if (totalRecords == 0)
+                    return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(null, request.pageNumber, request.pageSize, totalRecords);
+
+                bids = bids
+                    .Distinct()
+                    .OrderByDescending(a => a.CreationDate)
+                    .ApplyPaging(request.pageNumber, request.pageSize)
+                    .IncludeBasicBidData()
+                    .Include(a => a.BidType);
+
+                if (user.UserType == UserType.Donor)
+                    bids = bids.Include(b => b.BidSupervisingData.Where(s => s.SupervisorStatus != SponsorSupervisingStatus.Rejected));
+
+                var result = await bids
+                    .AsSplitQuery()
+                    .ToListAsync();
+
+                var bidsModels = _mapper.Map<List<GetMyBidResponse>>(result);
+
+                await MapAllBidsResult(user, null, association, donor, null, null, result, bidsModels);
+                return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(bidsModels, request.pageNumber, request.pageSize, totalRecords);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to search bids!",
+                    ControllerAndAction = "BidController/all-bids"
+                });
+                return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<GetMyBidResponse>>> GetAllBidsForBidParticipants(FilterBidsSearchModel request, IQueryable<Bid> bids, ApplicationUser user)
+        {
+            Company company = null;
+            Freelancer freelancer = null;
+            List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData = new();
+
+            if (user.UserType == UserType.Provider)
+            {
+                company = await _companyRepository.Find(x => x.IsDeleted == false && x.isVerfied == true && x.Id == user.CurrentOrgnizationId, false, nameof(Company.Provider))
+                    .Include(x => x.Company_Industries)
+                        .ThenInclude(x => x.CommercialSectorsTree)
+                    .FirstOrDefaultAsync();
+
+                if (company is null)
+                    return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(HttpErrorCode.NotFound, CommonErrorCodes.COMPANY_NOT_FOUND);
+
+                bidParticipantWorkingSectorsMiniData = company.Company_Industries.Where(x => x.CommercialSectorsTreeId.HasValue).Select(x => new IndustryMiniModel {Id = x.CommercialSectorsTreeId.Value, ParentId = x.CommercialSectorsTree.ParentId} ).ToList();
+            }
+            else if (user.UserType == UserType.Freelancer)
+            {
+                freelancer = await _freelancerRepository.Find(x => x.IsVerified && x.Id == user.CurrentOrgnizationId)
+                    .Include(x => x.FreelancerWorkingSectors)
+                        .ThenInclude(x => x.FreelanceWorkingSector)
+                    .FirstOrDefaultAsync();
+
+                if (freelancer is null)
+                    return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(HttpErrorCode.NotFound, CommonErrorCodes.FREELANCER_NOT_FOUND);
+
+                bidParticipantWorkingSectorsMiniData = freelancer.FreelancerWorkingSectors.Select(x => new IndustryMiniModel {Id = x.FreelanceWorkingSectorId, ParentId = x.FreelanceWorkingSector.ParentId}).ToList();
+            }
+            else
+                throw new ArgumentException($"This Enum {user.UserType.ToString()} not Handled Here {nameof(BidServiceCore.GetAllBidsForBidParticipants)}");
+
+            if (user.UserType == UserType.Provider && user.OrgnizationType == (int)OrganizationType.Comapny && company.AssignedAssociationId is null && company.AssignedDonorId is null)
+                bids = bids.Where(b => !b.IsBidAssignedForAssociationsOnly);
+
+            // المنافسات المسندة التي تم شراء وثائقها من قبل
+            if(user.UserType == UserType.Company)
+                bids = bids.Union(GetAssignedForAssociationsOnlyBidsAndThisCompanyBoughtTermsBook(company.Id));//check performance of union 
+
+
+            bids = bids.Where(x => (x.BidStatusId != (int)TenderStatus.Draft
+                    && x.BidStatusId != (int)TenderStatus.Pending
+                    && x.BidStatusId != (int)TenderStatus.Cancelled
+                    && x.BidStatusId != (int)TenderStatus.Reviewing));
+
+            bids = bids.Include(a => a.BidAddressesTime)
+             .IncludeBasicBidData()
+             .Include(x => x.Donor)
+             .Include(a => a.BidType);
+
+            bids = await ApplyFiltrationForBids(request, bids);
+            bids = GetRelatedBidsToBidParticipantWorkingSectorsFirstOrder(bids, freelancer, company, user, bidParticipantWorkingSectorsMiniData);
+
+            var totalRecordsForCompany = await bids.CountAsync();
+            if (totalRecordsForCompany == 0)
+                return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(null, request.pageNumber, request.pageSize);
+
+            var resultForCompany = await bids
+                        .ApplyPaging(request.pageNumber, request.pageSize)
+                        .ToListAsync();
+
+            var bidsModelsForCompany = _mapper.Map<List<GetMyBidResponse>>(resultForCompany);
+
+            await MapAllBidsResult(user, company, null, null, freelancer, bidParticipantWorkingSectorsMiniData, resultForCompany, bidsModelsForCompany);
+            return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(bidsModelsForCompany, request.pageNumber, request.pageSize, totalRecordsForCompany);
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<GetMyBidResponse>>> GetAllBidsForVisitor(FilterBidsSearchModel request)
+        {
+            try
+            {
+                IQueryable<Bid> bids = _bidRepository
+                    .Find(x => !x.IsDeleted && !x.IsBidHidden,true, false)
+                    .Where(x => x.BidStatusId != (int)TenderStatus.Draft)
+                    .Where(x => x.BidStatusId != (int)TenderStatus.Reviewing)
+                    .Where(x => x.BidStatusId != (int)TenderStatus.Cancelled)
+                    .Where(x => x.BidStatusId != (int)TenderStatus.Pending);
+
+                bids = await ApplyFiltrationForBids(request, bids);
+
+                var totalRecords = await bids.CountAsync();
+                if (totalRecords == 0)
+                    return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(null, request.pageNumber, request.pageSize);
+
+                var result = await bids
+                    .Distinct()
+                    .OrderByDescending(a => a.CreationDate)
+                    .ApplyPaging(request.pageNumber, request.pageSize)
+                    .IncludeBasicBidData()
+                    .Include(a => a.BidType)
+                    .AsSplitQuery()
+                    .ToListAsync();
+
+                var bidsModels = _mapper.Map<List<GetMyBidResponse>>(result);
+                var bidsIds = bidsModels.Select(a => a.Id);
+                await MapBidModelsBasicData(result, bidsModels, bidsIds);
+                bidsModels.ForEach(model =>
+                {
+                    model.EntityName = null;
+                    //model.EntityLogoResponse = null;
+                });
+
+                await MapAllBidsResultForVisitor(result, bidsModels);
+                return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(bidsModels, request.pageNumber, request.pageSize, totalRecords);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to search bids for visitor!",
+                    ControllerAndAction = "BidController/all-bids"
+                });
+                return new PagedResponse<IReadOnlyList<GetMyBidResponse>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private IQueryable<Bid> GetAssignedForAssociationsOnlyBidsAndThisCompanyBoughtTermsBook(long companyId)
+        {
+            return _bidRepository.Find(x =>
+                            !x.IsDeleted
+                            && x.IsBidAssignedForAssociationsOnly
+                            && x.ProviderBids.Any(p => p.IsPaymentConfirmed && p.CompanyId == companyId), true);
+        }
+
+        // Migrated from BidServiceCore
+        private IQueryable<ProviderBid> GetAssignedForAssociationsOnlyProviderBidsAndThisCompanyBoughtTermsBook(long companyId)
+        {
+            return _providerBidRepository.Find(x =>
+                            !x.Bid.IsDeleted
+                            && x.Bid.IsBidAssignedForAssociationsOnly
+                            && x.IsPaymentConfirmed
+                            && x.CompanyId == companyId, true);
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>> GetAssociationBids(GetBidsCreatedByUserModel request)
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+                if (user is null)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.NotAuthenticated);
+                if (user == null && user.UserType != UserType.Association)
+                {
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.NotAuthorized, RegistrationErrorCodes.YOU_ARE_NOT_AUTHORIZED);
+                }
+                if (request.PublishDateFrom > request.PublishDateTo)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.InvalidInput, BidErrorCodes.PUBLISH_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_PUBLISH_DATE_TO);
+                if (request.OfferSubmissionDateFrom > request.OfferSubmissionDateTo)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.InvalidInput, BidErrorCodes.OFFER_SUBMISSION_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_OFFER_SUBMISSION_DATE_TO);
+
+                long bidId = 0;
+                var association = await _associationService.GetUserAssociation(user.Email);
+                if (association != null)
+                {
+                    var bids = _bidRepository.Find(x => x.AssociationId == association.Id, false, nameof(Bid.BidAddressesTime), nameof(Bid.BidMainClassificationMapping), nameof(Bid.Association), nameof(Bid.BidStatus), nameof(Bid.BidType), nameof(Bid.BidRegions));//.Where(a => a.BidStatusId != (int)TenderStatus.Draft);
+
+                    if (!string.IsNullOrEmpty(request.RegionsId))
+                    {
+                        var regionsIdAsString = request.RegionsId.Split(',');
+                        int[] regionsId = Array.ConvertAll(regionsIdAsString, int.Parse);
+
+                        bids = bids.Where(b => b.BidRegions.Select(x => regionsId.Contains(x.RegionId)).Any(x => x));
+                    }
+
+                    if (request.BidTypeId != null || request.BidTypeId > 0)
+                        bids = bids.Where(a => a.BidTypeId == request.BidTypeId);
+                    if (request.BidMainClassificationId != null || request.BidMainClassificationId > 0)
+                        bids = bids.Where(a => a.Bid_Industries.Where(bm => bm.CommercialSectorsTreeId == request.BidMainClassificationId).Count() > 0);
+                    if (!string.IsNullOrEmpty(request.Publisher))
+                        bids = bids.Where(a => !string.IsNullOrEmpty(a.Presented_To) && a.Presented_To.Contains(request.Publisher));
+                    if (!string.IsNullOrEmpty(request.BiddingName))
+                        bids = bids.Where(a => a.BidName.Contains(request.BiddingName));
+                    if (!string.IsNullOrEmpty(request.BiddingRefNumber))
+                        bids = bids.Where(a => a.Ref_Number.Contains(request.BiddingRefNumber));
+                    if (!string.IsNullOrEmpty(request.BidsStatus) && request.BidsStatus == BidsStatus.Active.ToString())
+                        bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission > _dateTimeZone.CurrentDate);
+                    if (!string.IsNullOrEmpty(request.BidsStatus) && request.BidsStatus == BidsStatus.Expired.ToString())
+                        bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission < _dateTimeZone.CurrentDate);
+
+                    if (request.PublishDateFrom != null && request.PublishDateTo != null)
+                        bids = bids.Where(a => a.BidAddressesTime.OffersOpeningDate >= request.PublishDateFrom && a.BidAddressesTime.OffersOpeningDate <= request.PublishDateTo);
+                    else if (request.PublishDateFrom != null && request.PublishDateTo == null)
+                        bids = bids.Where(a => a.BidAddressesTime.OffersOpeningDate >= request.PublishDateFrom);
+                    else if (request.PublishDateFrom == null && request.PublishDateTo != null)
+                        bids = bids.Where(a => a.BidAddressesTime.OffersOpeningDate <= request.PublishDateTo);
+
+                    if (request.OfferSubmissionDateFrom != null && request.OfferSubmissionDateTo != null)
+                        bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission >= request.OfferSubmissionDateFrom && a.BidAddressesTime.LastDateInOffersSubmission <= request.OfferSubmissionDateTo);
+                    else if (request.OfferSubmissionDateFrom != null && request.OfferSubmissionDateTo == null)
+                        bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission >= request.OfferSubmissionDateFrom);
+                    else if (request.OfferSubmissionDateFrom == null && request.OfferSubmissionDateTo != null)
+                        bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission <= request.OfferSubmissionDateTo);//RegionId
+
+                    if (request.TermsBookPriceId != null && request.TermsBookPriceId == (int)TermsBookPrice.Free)
+                        bids = bids.Where(a => a.Bid_Documents_Price == 0);
+                    else if (request.TermsBookPriceId != null && request.TermsBookPriceId == (int)TermsBookPrice.p1_1000)
+                        bids = bids.Where(a => a.Bid_Documents_Price >= 1 && a.Bid_Documents_Price <= 1000);
+                    else if (request.TermsBookPriceId != null && request.TermsBookPriceId == (int)TermsBookPrice.p1001_10000)
+                        bids = bids.Where(a => a.Bid_Documents_Price >= 1001 && a.Bid_Documents_Price <= 10000);
+                    else if (request.TermsBookPriceId != null && request.TermsBookPriceId == (int)TermsBookPrice.p10001_20000)
+                        bids = bids.Where(a => a.Bid_Documents_Price >= 10001 && a.Bid_Documents_Price <= 20000);
+                    else if (request.TermsBookPriceId != null && request.TermsBookPriceId == (int)TermsBookPrice.p20001_40000)
+                        bids = bids.Where(a => a.Bid_Documents_Price >= 20001 && a.Bid_Documents_Price <= 40000);
+                    else if (request.TermsBookPriceId != null && request.TermsBookPriceId == (int)TermsBookPrice.p40001_50000)
+                        bids = bids.Where(a => a.Bid_Documents_Price >= 40001 && a.Bid_Documents_Price <= 50000);
+                    else if (request.TermsBookPriceId != null && request.TermsBookPriceId == (int)TermsBookPrice.greater50000)
+                        bids = bids.Where(a => a.Bid_Documents_Price > 50000);
+
+                    if (request.RegionId != null || request.RegionId > 0)
+                        bids = bids.Where(a => a.Association.RegionId == request.RegionId);
+
+
+                    if (request.BidStatusId != null || request.BidStatusId > 0)
+                        bids = bids.Where(a => a.BidStatusId == request.BidStatusId);
+
+                    if (bids == null || bids.Count() == 0)
+                    {
+                        return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(null, request.pageNumber, request.pageSize);
+                    }
+                    int totalRecords = bids.Count();
+                    bids = bids.OrderByDescending(a => a.CreationDate).Skip((request.pageNumber - 1) * request.pageSize).Take(request.pageSize);
+
+                    var bidsModels = _mapper.Map<IReadOnlyList<ReadOnlyFilterBidModel>>(bids.ToList());
+
+
+                    if (user != null)
+                    {
+                        var userFavBids = await _userFavBidList.Find(x => x.UserId == user.Id).ToListAsync();
+
+                        foreach (var itm in bidsModels)
+                        {
+                            if (userFavBids.FirstOrDefault(a => a.BidId == itm.Id) != null)
+                                itm.IsUserFavorite = true;
+
+                            //added Flag(IsBidAwarded)-->to know if bid is awarded or not 
+                            var awardingSelection = _awardingSelectRepository.Find(x => x.BidId == itm.Id).ToList();
+                            itm.IsBidAwarded = awardingSelection.Count() > 0 ? true : false;
+
+                            var tenderCount = await _tenderSubmitQuotationRepository.FindAsync(x => x.BidId == itm.Id && x.ProposalStatus == ProposalStatus.Delivered, true);
+                            itm.TenderQuotationsCount = tenderCount.Count();
+                        }
+                    }
+                    foreach (var item in bidsModels)
+                    {
+                        var bid = bids.FirstOrDefault(bid => bid.Id == item.Id);
+                        if (bid != null)
+                            item.Regions = BidRegion.getAllRegionsAsListOfIds(bid.BidRegions);
+
+                        item.Tender_Brochure_Policies_UrlResponse = await _imageService.GetFileResponseEncrypted(item.Tender_Brochure_Policies_Url, item.Tender_Brochure_Policies_FileName);
+                        item.Association.ImageResponse = await _imageService.GetFileResponseEncrypted(item.Association.Image, item.Association.ImageFileName);
+                        item.IsCurrentAssociation = true;
+                    }
+
+                    //bidsModels.ToList().ForEach(async b => {   b.Tender_Brochure_Policies_UrlResponse =  await imageService.GetFilePath(b.Tender_Brochure_Policies_Url);
+                    //    b.Association.ImageResponse = await imageService.GetFilePath(b.Association.Image);
+                    //    b.IsCurrentAssociation = true; });
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(bidsModels, request.pageNumber, request.pageSize, totalRecords);
+                }
+                return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(
+                              HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to Get Association Bid!",
+                    ControllerAndAction = "BidController/GetAssociationBids"
+                });
+                return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>> GetAssociationProviderBids(int pageSize = 10, int pageNumber = 1)
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+                if (user is null)
+                    return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(HttpErrorCode.NotAuthenticated);
+                if (user == null || user.UserType != UserType.Association)
+                {
+                    return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(HttpErrorCode.NotAuthorized, RegistrationErrorCodes.YOU_ARE_NOT_AUTHORIZED);
+                }
+                List<ProviderBid> providerBids = new List<ProviderBid>();
+
+                var association = await _associationService.GetUserAssociation(user.Email);
+                if (association == null)
+                    return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(HttpErrorCode.NotFound, CommonErrorCodes.ASSOCIATION_NOT_FOUND);
+
+                providerBids = _providerBidRepository.Find(x => x.Bid.AssociationId == association.Id && x.IsPaymentConfirmed && x.Bid.BidAddressesTime.OffersOpeningDate > _dateTimeZone.CurrentDate, false, nameof(ProviderBid.Bid), nameof(ProviderBid.Company)).ToList();
+
+                if (providerBids.Count() <= 0)
+                {
+
+                    //return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(
+                    //       HttpErrorCode.NotFound, CommonErrorCodes.NOT_FOUND);          
+                    return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(
+                           new List<GetProvidersBidsReadOnly>() as IReadOnlyList<GetProvidersBidsReadOnly>, pageNumber, pageSize, 0);
+                }
+                int totalRecords = providerBids.Count();
+                providerBids = providerBids.OrderByDescending(a => a.Bid.CreationDate).Skip((pageNumber - 1) * pageSize).Take(pageSize).ToList();
+
+                List<GetProvidersBidsReadOnly> models = new List<GetProvidersBidsReadOnly>();
+                foreach (var bid in providerBids)
+                {
+
+                    var bidAddressesTime = await _bidAddressesTimeRepository.FindOneAsync(x => x.BidId == bid.BidId);
+                    int days = 0;
+                    int hour = 0;
+                    if (bidAddressesTime.LastDateInOffersSubmission > _dateTimeZone.CurrentDate)
+                    {
+                        var countdwnon = ((DateTime)bidAddressesTime.LastDateInOffersSubmission).Subtract(_dateTimeZone.CurrentDate).TotalHours;
+                        days = (int)(countdwnon / 24);
+
+                        hour = (int)(countdwnon % 24);
+
+                    }
+                    //   var association = _bidRepository.FindOneAsync(x => x.Id == bid.BidId, false, nameof(Bid.Association));
+                    // var transactionNumber = _payTabTransactionRepository.Find(x => x.CartId == bid.TransactionNumber).FirstOrDefault();
+
+                    var paymentBasicData = new PaymentTransactionBasicData
+                    {
+                        TransactionNumber = bid.TransactionNumber,
+                        PaymentMethod = (Nafes.CrossCutting.Model.Enums.PaymentMethod)bid.PaymentMethodId
+                    };
+                    var payments = await _helperService.GetPaymentTransaction(new List<PaymentTransactionBasicData> { paymentBasicData });
+
+                    GetProvidersBidsReadOnly model = new GetProvidersBidsReadOnly
+                    {
+                        AssociationLogoResponse = await _imageService.GetFileResponseEncrypted(association.Image, association.ImageFileName),
+                        CompanyLogoResponse = await _imageService.GetFileResponseEncrypted(bid.Company.Image, bid.Company.ImageFileName),
+                        AssociationName = association.Association_Name,
+                        TransactionNumber = payments == null ? "" : payments.FirstOrDefault().TranRef,
+                        CreationDate = bid.CreationDate,
+                        Price = bid.Bid.Association_Fees,
+                        Id = bid.BidId,
+                        Title = bid.Bid.BidName,
+                        CountdownToCompleteDays = days,
+                        CountdownToCompleteHours = hour
+                    };
+
+                    models.Add(model);
+                }
+
+                var bidsModels = _mapper.Map<IReadOnlyList<GetProvidersBidsReadOnly>>(models.ToList());
+                //bidsModels.ToList().ForEach(x => x.AssociationLogo = !string.IsNullOrEmpty(x.AssociationLogo) ? fileSettings.BASE_URL + x.AssociationLogo : x.AssociationLogo);
+                //bidsModels.ToList().ForEach(x => x.CompanyLogo = !string.IsNullOrEmpty(x.CompanyLogo) ? fileSettings.BASE_URL + x.CompanyLogo : x.CompanyLogo);
+
+                return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(bidsModels, pageNumber, pageSize, totalRecords);
+
+
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"pageNumber = {pageNumber} & pageSize = {pageSize}",
+                    ErrorMessage = "Failed to Get Association Provider Bids!",
+                    ControllerAndAction = "ProviderController/GetAssociationProviderBids"
+                });
+                return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>> GetBidsCreatedByUser(GetBidsCreatedByUserModel request)
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+                if (request.PublishDateFrom > request.PublishDateTo)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.InvalidInput, BidErrorCodes.PUBLISH_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_PUBLISH_DATE_TO);
+                if (request.OfferSubmissionDateFrom > request.OfferSubmissionDateTo)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.InvalidInput, BidErrorCodes.OFFER_SUBMISSION_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_OFFER_SUBMISSION_DATE_TO);
+
+                var bids = _bidRepository.Find(x => x.CreatedBy == user.Id, false, nameof(Bid.BidAddressesTime), nameof(Bid.Association), nameof(Bid.BidMainClassificationMapping), nameof(Bid.BidStatus), nameof(Bid.BidType), nameof(Bid.BidRegions));
+
+                if (!string.IsNullOrEmpty(request.RegionsId))
+                {
+                    var regionsIdAsString = request.RegionsId.Split(',');
+                    int[] regionsId = Array.ConvertAll(regionsIdAsString, int.Parse);
+
+                    bids = bids.Where(b => b.BidRegions.Select(x => regionsId.Contains(x.RegionId)).Any(x => x));
+                }
+
+                if (request.BidTypeId != null || request.BidTypeId > 0)
+                    bids = bids.Where(a => a.BidTypeId == request.BidTypeId);
+                if (request.BidMainClassificationId != null || request.BidMainClassificationId > 0)
+                    bids = bids.Where(a => a.Bid_Industries.Where(bm => bm.CommercialSectorsTreeId == request.BidMainClassificationId).Count() > 0);
+                if (!string.IsNullOrEmpty(request.Publisher))
+                    bids = bids.Where(a => !string.IsNullOrEmpty(a.Presented_To) && a.Presented_To.Contains(request.Publisher));
+                if (!string.IsNullOrEmpty(request.BiddingName))
+                    bids = bids.Where(a => a.BidName.Contains(request.BiddingName));
+                if (!string.IsNullOrEmpty(request.BiddingRefNumber))
+                    bids = bids.Where(a => a.Ref_Number.Contains(request.BiddingRefNumber));
+                if (!string.IsNullOrEmpty(request.BidsStatus) && request.BidsStatus == BidsStatus.Active.ToString())
+                    bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission > _dateTimeZone.CurrentDate);
+                if (!string.IsNullOrEmpty(request.BidsStatus) && request.BidsStatus == BidsStatus.Expired.ToString())
+                    bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission < _dateTimeZone.CurrentDate);
+
+                if (request.PublishDateFrom != null && request.PublishDateTo != null)
+                    bids = bids.Where(a => a.BidAddressesTime.OffersOpeningDate >= request.PublishDateFrom && a.BidAddressesTime.OffersOpeningDate <= request.PublishDateTo);
+                else if (request.PublishDateFrom != null && request.PublishDateTo == null)
+                    bids = bids.Where(a => a.BidAddressesTime.OffersOpeningDate >= request.PublishDateFrom);
+                else if (request.PublishDateFrom == null && request.PublishDateTo != null)
+                    bids = bids.Where(a => a.BidAddressesTime.OffersOpeningDate <= request.PublishDateTo);
+
+                if (request.OfferSubmissionDateFrom != null && request.OfferSubmissionDateTo != null)
+                    bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission >= request.OfferSubmissionDateFrom && a.BidAddressesTime.LastDateInOffersSubmission <= request.OfferSubmissionDateTo);
+                else if (request.OfferSubmissionDateFrom != null && request.OfferSubmissionDateTo == null)
+                    bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission >= request.OfferSubmissionDateFrom);
+                else if (request.OfferSubmissionDateFrom == null && request.OfferSubmissionDateTo != null)
+                    bids = bids.Where(a => a.BidAddressesTime.LastDateInOffersSubmission <= request.OfferSubmissionDateTo);//RegionId
+
+                if (request.TermsBookPriceId != null || request.TermsBookPriceId == (int)TermsBookPrice.Free)
+                    bids = bids.Where(a => a.Bid_Documents_Price == 0);
+                else if (request.TermsBookPriceId != null || request.TermsBookPriceId == (int)TermsBookPrice.p1_1000)
+                    bids = bids.Where(a => a.Bid_Documents_Price >= 1 && a.Bid_Documents_Price <= 1000);
+                else if (request.TermsBookPriceId != null || request.TermsBookPriceId == (int)TermsBookPrice.p1001_10000)
+                    bids = bids.Where(a => a.Bid_Documents_Price >= 1001 && a.Bid_Documents_Price <= 10000);
+                else if (request.TermsBookPriceId != null || request.TermsBookPriceId == (int)TermsBookPrice.p10001_20000)
+                    bids = bids.Where(a => a.Bid_Documents_Price >= 10001 && a.Bid_Documents_Price <= 20000);
+                else if (request.TermsBookPriceId != null || request.TermsBookPriceId == (int)TermsBookPrice.p20001_40000)
+                    bids = bids.Where(a => a.Bid_Documents_Price >= 20001 && a.Bid_Documents_Price <= 40000);
+                else if (request.TermsBookPriceId != null || request.TermsBookPriceId == (int)TermsBookPrice.p40001_50000)
+                    bids = bids.Where(a => a.Bid_Documents_Price >= 40001 && a.Bid_Documents_Price <= 50000);
+                else if (request.TermsBookPriceId != null || request.TermsBookPriceId == (int)TermsBookPrice.greater50000)
+                    bids = bids.Where(a => a.Bid_Documents_Price > 50000);
+
+                if (request.RegionId != null || request.RegionId > 0)
+                    bids = bids.Where(a => a.Association.RegionId == request.RegionId);
+
+
+                if (request.BidStatusId != null || request.BidStatusId > 0)
+                    bids = bids.Where(a => a.BidStatusId == request.BidStatusId);
+
+                if (bids == null | bids.Count() == 0)
+                {
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(null, request.pageNumber, request.pageSize);
+                }
+                int totalRecords = bids.Count();
+                bids = bids.OrderByDescending(a => a.CreationDate).Skip((request.pageNumber - 1) * request.pageSize).Take(request.pageSize);
+
+
+                var bidsModels = _mapper.Map<IReadOnlyList<ReadOnlyFilterBidModel>>(bids.ToList());
+
+                foreach (var item in bidsModels)
+                {
+                    var bid = bids.FirstOrDefault(bid => bid.Id == item.Id);
+                    if (bid != null)
+                        item.Regions = BidRegion.getAllRegionsAsListOfIds(bid.BidRegions);
+
+                    item.Tender_Brochure_Policies_UrlResponse = await _imageService.GetFileResponseEncrypted(item.Tender_Brochure_Policies_Url, item.Tender_Brochure_Policies_FileName);
+                }
+                //bidsModels.ToList().ForEach( async b => b.Tender_Brochure_Policies_UrlResponse = await imageService.GetFilePath(b.Tender_Brochure_Policies_Url)
+                //!string.IsNullOrEmpty(b.Tender_Brochure_Policies_Url) ? fileSettings.BASE_URL + b.Tender_Brochure_Policies_Url : b.Tender_Brochure_Policies_Ur
+                //l
+                //);
+                return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(bidsModels, request.pageNumber, request.pageSize, totalRecords);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to Get Bids Created By User!",
+                    ControllerAndAction = "BidController/GetBidsCreatedByUser"
+                });
+                return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private IQueryable<Bid> GetBidsForCurrentUser(ApplicationUser usr, Donor donor)
+        {
+            IQueryable<Bid> bids = _bidRepository.Find(bid => !bid.IsDeleted, false)
+                                        .Include(b => b.BidAddressesTime)
+                                        .Include(b => b.Association)
+                                        .Include(b => b.BidStatus)
+                                        .Include(b => b.BidRegions)
+                                            .ThenInclude(b => b.Region)
+                                        .Include(b => b.Bid_Industries).ThenInclude(y => y.CommercialSectorsTree).ThenInclude(z => z.Parent)
+                                        .Include(b => b.FreelanceBidIndustries).ThenInclude(y => y.FreelanceWorkingSector).ThenInclude(z => z.Parent)
+                                        .Include(b => b.BidType)
+                                        .Include(b => b.Donor)
+                                        .Include(b => b.BidDonor.Donor)
+                                        .Include(x => x.BidSupervisingData)
+                                        .AsSplitQuery();
+
+            bids = bids.Where(bid =>
+            // owner of bid
+            bid.EntityId == usr.CurrentOrgnizationId && bid.EntityType == usr.UserType
+            // user is association and he is Supervising this bid
+            || (bid.SupervisingAssociationId == usr.CurrentOrgnizationId && usr.UserType == UserType.Association)
+            //user is donor and he is يمنح this bid
+            || (bid.BidStatusId != (int)TenderStatus.Draft && donor != null && bid.BidDonorId.HasValue && bid.BidDonor.DonorId == donor.Id)
+            // user id donor and he has Supervising claims at this bid
+            || (bid.BidStatusId != (int)TenderStatus.Draft && donor != null &&
+            (bid.BidSupervisingData.Where(x => x.SupervisorStatus != SponsorSupervisingStatus.Rejected).GroupBy(x => x.SupervisingServiceClaimCode).Select(x => x.OrderByDescending(d => d.Id).First().DonorId).Contains(donor.Id)))
+            );
+            return bids;
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>> GetBidsList(FilterBidsSearchModel request)
+        {
+            try
+            {
+
+                var user = _currentUserService.CurrentUser;
+                if (user == null)
+                {
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.NotAuthenticated);
+                }
+
+                if (request.PublishDateFrom > request.PublishDateTo)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.InvalidInput, BidErrorCodes.PUBLISH_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_PUBLISH_DATE_TO);
+                if (request.OfferSubmissionDateFrom > request.OfferSubmissionDateTo)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(HttpErrorCode.InvalidInput, BidErrorCodes.OFFER_SUBMISSION_DATE_FROM_MUST_BE_EQUAL_TO_OR_BEFORE_OFFER_SUBMISSION_DATE_TO);
+
+                var listOfAdministrationUserTypes = new List<UserType> { UserType.SuperAdmin, UserType.Admin, UserType.SupportManager, UserType.SupportMember };
+
+
+                IQueryable<Bid> bids = listOfAdministrationUserTypes.Contains(user.UserType) ?
+                   _bidRepository.Find(x => true, false, nameof(Bid.BidAddressesTime), nameof(Bid.Association), nameof(Bid.BidMainClassificationMapping), nameof(Bid.BidStatus), nameof(Bid.BidType), nameof(Bid.BidRegions))
+                 : _bidRepository.Find(x => x.BidTypeId == (int)BidTypes.Public, false, nameof(Bid.BidAddressesTime), nameof(Bid.Association), nameof(Bid.BidMainClassificationMapping), nameof(Bid.BidStatus), nameof(Bid.BidType), nameof(Bid.BidRegions));
+
+
+
+                IEnumerable<Bid> combinedBidList = new List<Bid>();
+                Company company = null;
+
+                if (user.UserType == UserType.Provider)
+                {
+                    if (user.OrgnizationType == (int)OrganizationType.Comapny)
+                    {
+                        company = await _companyRepository.FindOneAsync(x => x.Id == user.CurrentOrgnizationId, false);
+
+                        if (company == null)
+                        {
+                            var provider = await _providerRepository.Find(p => p.UserId == user.Id).Select(x => x.Id).FirstOrDefaultAsync();
+                            company = await _companyRepository.FindOneAsync(x => x.ProviderId == provider, false);
+
+                        }
+
+                        if (company != null)
+                        {
+                            var bidInvitations = await _bidInvitationsRepository.Find(x => x.CompanyId == company.Id && x.InvitationStatus == InvitationStatus.Sent, false)
+                                .Select(x => x.BidId).ToListAsync();
+                            //It will get all closedBidsProvider where Id is in bidInvitations list
+                            var closedBidsProvider = _bidRepository.Find(x => x.BidTypeId != (int)BidTypes.Public && x.BidStatusId != (int)TenderStatus.Draft, false,
+                                nameof(Bid.BidAddressesTime),
+                                nameof(Bid.Association),
+                                nameof(Bid.BidStatus),
+                                nameof(Bid.BidMainClassificationMapping),
+                                nameof(Bid.BidType),
+                                nameof(Bid.BidRegions)).Where(p => bidInvitations.Contains(p.Id));
+
+                            bids = bids.Union(closedBidsProvider);
+                            //execlude draft bids for provider
+                            bids = bids.Where(x => x.BidStatusId != (int)TenderStatus.Draft);
+
+                        }
+                    }
+                }
+                else if (user.UserType == UserType.Company)
+                {
+                    var userCompany = await _companyService.GetUserCompany(user.Email);
+                    if (userCompany != null)
+                    {
+                        company = userCompany;
+                        var bidInvitations = await _bidInvitationsRepository.Find(x => x.CompanyId == userCompany.Id, false)
+                            .Select(x => x.BidId).ToListAsync();
+
+                        //It will get all closedBidsProvider where Id is in bidInvitations list
+                        var closedBidsProvider = _bidRepository.Find(x => x.BidTypeId != (int)BidTypes.Public && x.BidStatusId == (int)TenderStatus.Open, false,
+                                nameof(Bid.BidAddressesTime),
+                                nameof(Bid.Association),
+                                nameof(Bid.BidStatus),
+                                nameof(Bid.BidMainClassificationMapping),
+                                nameof(Bid.BidType),
+                                nameof(Bid.BidRegions)).Where(p => bidInvitations.Contains(p.Id));
+
+                        bids = bids.Union(closedBidsProvider);
+                        //execlude draft bids for provider
+                        bids = bids.Where(x => x.BidStatusId != (int)TenderStatus.Draft);
+
+
+                    }
+                }
+
+                long currentAssociationId = 0;
+                if (user.UserType == UserType.Association)
+                {
+                    var association = await _associationService.GetUserAssociation(user.Email);
+                    if (association != null)
+                    {
+                        currentAssociationId = association.Id;
+                        var bidInvitations = _bidInvitationsRepository.Find(x => x.Bid.AssociationId == association.Id, false
+                        /*nameof(BidInvitations.Bid)*/).Select(x => x.BidId);
+
+                        var closedBidsAssociation = _bidRepository.Find(x => (x.AssociationId == association.Id || x.SupervisingAssociationId == association.Id) && x.BidTypeId != (int)BidTypes.Public && (x.BidStatusId == (int)TenderStatus.Open || x.BidStatusId == (int)TenderStatus.Pending), false,
+                            nameof(Bid.BidAddressesTime),
+                            nameof(Bid.Association),
+                            nameof(Bid.BidStatus),
+                            nameof(Bid.BidMainClassificationMapping),
+                            nameof(Bid.BidType),
+                            nameof(Bid.BidRegions)).Where(x => bidInvitations.Contains(x.Id));
+
+
+                        bids = bids.Where(x => !(x.BidStatusId == (int)TenderStatus.Pending && currentAssociationId != x.AssociationId))
+                            .Union(closedBidsAssociation);
+
+                        var OthersDraftedBids = bids
+                            .Where(b => b.BidStatusId == (int)TenderStatus.Draft && b.AssociationId != currentAssociationId);
+
+
+                        bids = bids.Where(b => !OthersDraftedBids.Any(x => x.Id == b.Id));
+
+                    }
+                }
+
+
+                // execlude pending bids if user is super admin
+                if (listOfAdministrationUserTypes.Contains(user.UserType))
+                    bids = bids.Where(a => a.BidStatusId != (int)TenderStatus.Pending);
+
+                bids = await ApplyFiltrationForBids(request, bids);
+
+                var BidsCount = await bids.CountAsync();
+                try
+                {
+                    if (bids == null || BidsCount == 0)
+                    {
+                        return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(null, request.pageNumber, request.pageSize);
+                    }
+                }
+                catch
+                {
+                    return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(null, request.pageNumber, request.pageSize);
+                }
+                bids = bids.OrderByDescending(a => a.CreationDate);
+
+                //int totalRecords = combinedBidList.Count();
+                int totalRecords = BidsCount;
+                bids = bids.OrderByDescending(a => a.CreationDate).Skip((request.pageNumber - 1) * request.pageSize).Take(request.pageSize);
+
+
+                var bidsModels = (_mapper.Map<List<ReadOnlyFilterBidModel>>(await bids.ToListAsync()));
+
+                foreach (var bid in bids)
+                {
+                    var bidMod = bidsModels.FirstOrDefault(bidMod => bidMod.Id == bid.Id);
+
+                    if (bidMod != null)
+                        bidMod.Regions = BidRegion.getAllRegionsAsListOfIds(bid.BidRegions);
+                }
+
+
+
+
+
+                foreach (var x in bidsModels)
+                {
+                    x.Association.ImageResponse = await _imageService.GetFileResponseEncrypted(x.Association.Image, x.Association.ImageFileName);
+                    x.IsCurrentAssociation = x.AssociationId == currentAssociationId ? true : false;
+
+                }
+
+
+                if (user != null)
+                {
+                    var userFavBids = (await _userFavBidList.Find(x => x.UserId == user.Id).ToListAsync()).ToDictionary(x => x.BidId);
+
+                    var bidsIds = bidsModels.Select(x => x.Id);
+                    var awardingSelections = await _awardingSelectRepository.Find(x => bidsIds.Contains(x.BidId)).ToListAsync();
+                    var tendersSubmitsQutations = await _tenderSubmitQuotationRepository.Find(x => bidsIds.Contains(x.BidId)).ToListAsync();
+                    var providersBids = await _providerBidRepository.Find(x => bidsIds.Contains(x.BidId) && x.IsPaymentConfirmed == true).ToListAsync();
+
+
+                    foreach (var itm in bidsModels)
+                    {
+
+                        if (userFavBids.ContainsKey(itm.Id))
+                            itm.IsUserFavorite = true;
+                        var awardingSelection = awardingSelections.Where(x => x.BidId == itm.Id);
+                        //added Flag(IsBidAwarded)-->to know if bid is awarded or not 
+                        itm.IsBidAwarded = (awardingSelection.Count()) > 0 ? true : false;
+
+                        if (user.UserType == UserType.Provider || user.UserType == UserType.Company)
+                        {
+                            if (company != null)
+                            {
+                                itm.IsBuyRFI = providersBids.Where(x => x.BidId == itm.Id && x.CompanyId == company.Id).Count() > 0 ? true : false;
+
+                                var tSub = (tendersSubmitsQutations.Where(x => x.BidId == itm.Id && x.CompanyId == company.Id && x.ProposalStatus == ProposalStatus.Delivered).Select(x => x.Id)
+                                .FirstOrDefault());
+
+
+                                itm.IsApplyForBid = tSub > 0 ? true : false;
+
+
+
+
+                                itm.QuotationId = tSub;
+                                if (!itm.IsApplyForBid)
+                                {
+                                    var tenderQuotationOrdered = tendersSubmitsQutations.Where(x => x.BidId == itm.Id && x.CompanyId == company.Id)
+                                        .OrderByDescending(a => a.CreationDate).Select(x => x.Id).FirstOrDefault();
+                                    if (tenderQuotationOrdered > 0)
+                                        itm.QuotationId = tenderQuotationOrdered;
+                                }
+                            }
+                        }
+
+                        var tenderCount = tendersSubmitsQutations.Where(x => x.BidId == itm.Id && x.ProposalStatus == ProposalStatus.Delivered);
+                        itm.TenderQuotationsCount = tenderCount.Count();
+                    }
+                }
+
+                return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(bidsModels, request.pageNumber, request.pageSize, totalRecords);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to search bids!",
+                    ControllerAndAction = "BidController/GetAll"
+                });
+                return new PagedResponse<IReadOnlyList<ReadOnlyFilterBidModel>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<OperationResult<GetBidsSearchHeadersResponse>> GetBidsSearchHeadersAsync()
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+
+                var res = new GetBidsSearchHeadersResponse();
+                res.BidTypes = await _bidTypeRepository.Find(x => x.IsVisible)
+                    .ToListAsync();
+
+                res.TermsBookPrices = await _termsBookPriceRepository.Find(x => x.IsVisible)
+                    .ToListAsync();
+
+                if (user is null)
+                    return OperationResult<GetBidsSearchHeadersResponse>.Success(res);
+
+                var userSearchRsult = await _userSearchService.GetUserSearch();
+                if (!userSearchRsult.IsSucceeded)
+                    return OperationResult<GetBidsSearchHeadersResponse>.Fail(userSearchRsult.HttpErrorCode, userSearchRsult.Code, userSearchRsult.ErrorMessage);
+
+                res.UserSearches = userSearchRsult.Data;
+
+                return OperationResult<GetBidsSearchHeadersResponse>.Success(res);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = null,
+                    ErrorMessage = "Failed to Get Bids Search Headers!",
+                    ControllerAndAction = "BidController/BidsSearchHeadersAsync"
+                });
+                return OperationResult<GetBidsSearchHeadersResponse>.Fail(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task GetModelItemForBid(string currentUserId, Bid bid, GetMyBidResponse model, Association associationBid, Donor donor, List<UserFavBidList> userFavorites)
+        {
+            model.Id = bid.Id;
+            model.Title = bid.BidName;
+            model.EntityType = bid.AssociationId.HasValue ? UserType.Association : UserType.Donor;
+            model.EntityId = bid.AssociationId.HasValue ? bid.AssociationId.Value : bid.DonorId.Value;
+            model.Price = bid.Bid_Documents_Price;
+            model.Ref_Number = bid.Ref_Number;
+            model.BidStatusId = bid.BidStatusId;
+            model.CreationDate = bid.CreationDate;
+            model.LastDateInOffersSubmission = bid.BidAddressesTime != null ? bid.BidAddressesTime.LastDateInOffersSubmission : null;
+            model.IsUserFavorite = IsBidFavoriteByCurrentUser(currentUserId, bid.Id, userFavorites);
+            model.BidTypeId = bid.BidTypeId;
+            model.BidTypeName = bid.BidTypeId.HasValue ? bid.BidType.NameAr : "";
+            model.BidVisibility = (int)bid.BidVisibility;
+            model.DeliveryPlace = bid.DeliveryPlace;
+            model.IsBidAssignedForAssociationsOnly = bid.IsBidAssignedForAssociationsOnly;
+
+            model.RegionsNames = bid.BidRegions.Select(b => b.Region.NameAr).ToList();
+            var workingSectors = bid.GetBidWorkingSectors();
+            model.BidMainClassificationId = workingSectors.
+               Select(a => new BidMainClassificationIds { Id = a.Id, ParentId = a.ParentId }).ToList().DistinctBy(x => x.Id).ToList();
+            model.BidMainClassificationNames = workingSectors
+                .Select(i => new BidMainClassificationNames { Name = i.NameAr, ParentName = i.Parent?.NameAr }).DistinctBy(x => x.Name).ToList();
+
+
+
+            if (bid.EntityType == UserType.Association)
+            {
+
+                model.EntityLogoResponse = await _imageService.GetFileResponseEncrypted(associationBid.Image, associationBid.ImageFileName);
+                model.EntityName = associationBid.Association_Name;
+                model.EntityImage = associationBid.Image;
+                model.EntityImageFileName = associationBid.ImageFileName;
+            }
+            else if (bid.EntityType == UserType.Donor)
+            {
+
+                model.EntityLogoResponse = await _imageService.GetFileResponseEncrypted(bid.Donor.Image, bid.Donor.ImageFileName);
+                model.EntityName = donor.DonorName;
+                model.EntityImage = donor.Image;
+                model.EntityImageFileName = donor.ImageFileName;
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<List<GetMyBidResponse>>> GetMyBidsAsync(FilterBidsSearchModel model)
+        {
+            try
+            {
+                var usr = _currentUserService.CurrentUser;
+                if (usr == null)
+                    return new PagedResponse<List<GetMyBidResponse>>
+                        (HttpErrorCode.NotAuthenticated);
+
+                await _bidSearchLogService.AddBidSearcLogAsync(model, usr);
+
+                List<GetMyBidResponse> models = new List<GetMyBidResponse>();
+
+                if (usr.UserType == UserType.Provider && usr.OrgnizationType == (int)OrganizationType.Comapny)
+                {
+                    IQueryable<ProviderBid> providerBids = null;
+                    Company currentCompany = null;
+                    ApplicationUser currentCompanyUser = null;
+
+                    currentCompany = await _companyRepository.FindOneAsync(x => x.IsDeleted == false && x.isVerfied == true && x.Id == usr.CurrentOrgnizationId, false, nameof(Company.Provider));
+                    if (currentCompany is null)
+                        return new PagedResponse<List<GetMyBidResponse>>
+                            (HttpErrorCode.NotAuthorized, CommonErrorCodes.COMPANY_NOT_FOUND);
+
+                    currentCompanyUser = await _userManager.FindByEmailAsyncSafe(currentCompany.Email);
+                    if (currentCompanyUser == null)
+                        return new PagedResponse<List<GetMyBidResponse>>
+                            (HttpErrorCode.NotAuthorized, CommonErrorCodes.USER_NOT_EXIST);
+
+                    providerBids = _providerBidRepository
+                        .Find(x => x.CompanyId == currentCompany.Id && x.IsPaymentConfirmed && !x.Bid.IsDeleted, false);
+
+                    if (currentCompany.AssignedAssociationId is null && currentCompany.AssignedDonorId is null)
+                        providerBids = providerBids.Where(b => !b.Bid.IsBidAssignedForAssociationsOnly);
+
+                    // الوثائق التي تم شرائها من قبل لمنافسات مسندة
+                    var assignedForAssociationsOnlyProviderBidsAndThisCompanyBoughtIt = GetAssignedForAssociationsOnlyProviderBidsAndThisCompanyBoughtTermsBook(currentCompany.Id);
+
+                    providerBids = providerBids
+                        .Union(assignedForAssociationsOnlyProviderBidsAndThisCompanyBoughtIt)
+                        .Include(p => p.Bid)
+                            .ThenInclude(b => b.BidAddressesTime)
+                        .Include(b => b.Bid.Association)
+                        .Include(b => b.Bid.BidRegions)
+                            .ThenInclude(c => c.Region)
+                        .Include(b => b.Bid.BidStatus)
+                        .Include(b => b.Bid.BidType)
+                        .Include(b => b.Bid.Bid_Industries).ThenInclude(y => y.CommercialSectorsTree).ThenInclude(z => z.Parent)
+                        .Include(b => b.Bid.FreelanceBidIndustries).ThenInclude(y => y.FreelanceWorkingSector).ThenInclude(z => z.Parent)
+                        .Include(b => b.Bid.BidType)
+                        .Include(x => x.Bid.Donor)
+                        .AsSplitQuery();
+
+                    providerBids = ApplyFiltrationForProviderBids(model, providerBids,usr.UserType);
+
+                    int totalRecords = await providerBids.CountAsync();
+                    if (providerBids == null || totalRecords == 0)
+                        return new PagedResponse<List<GetMyBidResponse>>(null, model.pageNumber, model.pageSize);
+
+                    var providerBidsList = await providerBids
+                        .OrderByDescending(a => a.Bid.CreationDate)
+                        .Skip((model.pageNumber - 1) * model.pageSize)
+                        .Take(model.pageSize)
+                        .AsSplitQuery()
+                        .ToListAsync();
+
+                    List<IndustryMiniModel> company_Industeries = new List<IndustryMiniModel>();
+                    company_Industeries = await _companyIndustryRepository.Find(x => x.CompanyId == currentCompany.Id).
+                        Select(y => new IndustryMiniModel { Id = y.CommercialSectorsTreeId, ParentId = y.CommercialSectorsTree.ParentId }).ToListAsync();
+
+
+                    var userFavorites = await _userFavBidList.Find(x => x.UserId == usr.Id && providerBidsList.Select(s => s.Id).Contains(x.BidId)).ToListAsync();
+                    var userFavBids = userFavorites.ToDictionary(x => x.BidId);
+
+
+                    foreach (var providerBid in providerBidsList)
+                    {
+                        GetMyBidResponse response = new()
+                        {
+                            IsBuyCompetitionDocuments = true,
+                            IsFunded = providerBid.Bid.IsFunded,
+                            Regions = BidRegion.getAllRegionsAsListOfIds(providerBid.Bid.BidRegions)
+                        };
+                        await GetModelItemForBid(currentCompanyUser.Id, providerBid.Bid, response, providerBid.Bid.Association, providerBid.Bid.Donor, userFavorites);
+
+                        response.hasProviderMatchIndustries = response.BidMainClassificationId.Any(x => company_Industeries.Any(y => y.ParentId == x.ParentId));
+                        if (userFavBids.ContainsKey(providerBid.Id))
+                            response.IsUserFavorite = true;
+                        else
+                            response.IsUserFavorite = false;
+                        models.Add(response);
+                    }
+
+                    return new PagedResponse<List<GetMyBidResponse>>(models, model.pageNumber, model.pageSize, totalRecords);
+                }
+                else if (usr.UserType == UserType.Freelancer && usr.OrgnizationType == (int)OrganizationType.Freelancer)
+                {
+                    IQueryable<ProviderBid> providerBids = null;
+                    Freelancer currentFreelancer = null;
+                    ApplicationUser currentFreelancerUser = null;
+
+                    currentFreelancer = await _freelancerRepository.FindOneAsync(x =>  x.IsVerified == true && x.Id == usr.CurrentOrgnizationId);
+                    if (currentFreelancer is null)
+                        return new PagedResponse<List<GetMyBidResponse>>
+                            (HttpErrorCode.NotAuthorized, CommonErrorCodes.COMPANY_NOT_FOUND);
+
+                    currentFreelancerUser = await _userManager.FindByEmailAsyncSafe(currentFreelancer.Email);
+                    if (currentFreelancerUser == null)
+                        return new PagedResponse<List<GetMyBidResponse>>
+                            (HttpErrorCode.NotAuthorized, CommonErrorCodes.USER_NOT_EXIST);
+
+                    providerBids = _providerBidRepository
+                        .Find(x => x.FreelancerId == currentFreelancer.Id && x.IsPaymentConfirmed && !x.Bid.IsDeleted, false);
+
+
+
+                    providerBids = providerBids
+                        .Include(p => p.Bid)
+                            .ThenInclude(b => b.BidAddressesTime)
+                        .Include(b => b.Bid.Association)
+                        .Include(b => b.Bid.BidRegions)
+                            .ThenInclude(c => c.Region)
+                        .Include(b => b.Bid.BidStatus)
+                        .Include(b => b.Bid.BidType)
+                        .Include(b => b.Bid.Bid_Industries).ThenInclude(y => y.CommercialSectorsTree).ThenInclude(z => z.Parent)
+                        .Include(b => b.Bid.FreelanceBidIndustries).ThenInclude(y => y.FreelanceWorkingSector).ThenInclude(z => z.Parent)
+                        .Include(b => b.Bid.BidType)
+                        .Include(x => x.Bid.Donor)
+                        .AsSplitQuery();
+
+                    providerBids = ApplyFiltrationForProviderBids(model, providerBids,usr.UserType);
+
+                    int totalRecords = await providerBids.CountAsync();
+                    if (providerBids == null || totalRecords == 0)
+                        return new PagedResponse<List<GetMyBidResponse>>(null, model.pageNumber, model.pageSize);
+
+                    var providerBidsList = await providerBids
+                        .OrderByDescending(a => a.Bid.CreationDate)
+                        .Skip((model.pageNumber - 1) * model.pageSize)
+                        .Take(model.pageSize)
+                        .AsSplitQuery()
+                        .ToListAsync();
+
+                    List<IndustryMiniModel> freelancer_Industeries = new List<IndustryMiniModel>();
+                    freelancer_Industeries = await _freelancerFreelanceWorkingSectorRepository.Find(x => x.FreelancerId == currentFreelancer.Id).
+                        Select(y => new IndustryMiniModel { Id = y.FreelanceWorkingSectorId, ParentId = y.FreelanceWorkingSector.ParentId }).ToListAsync();
+
+
+                    var userFavorites = await _userFavBidList.Find(x => x.UserId == usr.Id && providerBidsList.Select(s => s.Id).Contains(x.BidId)).ToListAsync();
+                    var userFavBids = userFavorites.ToDictionary(x => x.BidId);
+
+
+                    foreach (var providerBid in providerBidsList)
+                    {
+                        GetMyBidResponse response = new()
+                        {
+                            IsBuyCompetitionDocuments = true,
+                            IsFunded = providerBid.Bid.IsFunded,
+                            Regions = BidRegion.getAllRegionsAsListOfIds(providerBid.Bid.BidRegions)
+                        };
+                        await GetModelItemForBid(currentFreelancerUser.Id, providerBid.Bid, response, providerBid.Bid.Association, providerBid.Bid.Donor, userFavorites);
+
+                        response.hasProviderMatchIndustries = response.BidMainClassificationId.Any(x => freelancer_Industeries.Any(y => y.ParentId == x.ParentId));
+                        if (userFavBids.ContainsKey(providerBid.Id))
+                            response.IsUserFavorite = true;
+                        else
+                            response.IsUserFavorite = false;
+                        models.Add(response);
+                    }
+
+                    return new PagedResponse<List<GetMyBidResponse>>(models, model.pageNumber, model.pageSize, totalRecords);
+                }
+                else if (usr.UserType == UserType.Association || usr.UserType == UserType.Donor)
+                {
+                    IQueryable<Bid> bids = null;
+                    ApplicationUser currentEntityUser = null;
+
+                    Association association = null;
+                    if (usr.UserType == UserType.Association)
+                    {
+                        association = await _associationService.GetUserAssociation(usr.Email);
+                        if (association is null)
+                            return new PagedResponse<List<GetMyBidResponse>>
+                            (HttpErrorCode.NotFound, CommonErrorCodes.ASSOCIATION_NOT_FOUND);
+
+                        currentEntityUser = await _userManager.FindByEmailAsyncSafe(association.Manager_Email);
+                        if (currentEntityUser == null)
+                            return new PagedResponse<List<GetMyBidResponse>>
+                                (HttpErrorCode.NotAuthorized, CommonErrorCodes.USER_NOT_EXIST);
+                    }
+                    Donor donor = null;
+                    if (usr.UserType == UserType.Donor)
+                    {
+                        donor = await _donorService.GetUserDonor(usr.Email);
+                        if (donor is null)
+                            return new PagedResponse<List<GetMyBidResponse>>
+                            (HttpErrorCode.NotFound, CommonErrorCodes.DONOR_NOT_FOUND);
+
+                        currentEntityUser = await _userManager.FindByEmailAsyncSafe(donor.ManagerEmail);
+                        if (currentEntityUser == null)
+                            return new PagedResponse<List<GetMyBidResponse>>
+                                (HttpErrorCode.NotAuthorized, CommonErrorCodes.USER_NOT_EXIST);
+                    }
+
+
+                    bids = GetBidsForCurrentUser(usr, donor);
+                    var IsUserHasCreateBidClaim = await _helperService.CheckIfUserHasSpecificClaims(new List<string> { Constants.AssociationCreateBidClaim, Constants.DonorCreateBidClaim }, usr);
+                    bids = IsUserHasCreateBidClaim ? bids : bids.Where(x => x.BidStatusId != (int)TenderStatus.Draft);
+                    bids = await ApplyFiltrationForBids(model, bids);
+
+                    int totalRecords = await bids.CountAsync();
+                    if (totalRecords == 0)
+                        return new PagedResponse<List<GetMyBidResponse>>(null, model.pageNumber, model.pageSize);
+
+                    var bidsList = await bids
+                        .OrderByDescending(a => a.CreationDate)
+                        .Skip((model.pageNumber - 1) * model.pageSize)
+                        .Take(model.pageSize)
+                        .AsSplitQuery()
+                        .ToListAsync();
+
+                    //var donorsId = bidsList.Where(x => x.EntityType == UserType.Donor).
+                    //   Select(x => x.EntityId);
+                    //var donors = await _donorRepository.FindAsync(don => donorsId.Contains(don.Id));
+                    var userFavorites = await _userFavBidList.Find(x => x.UserId == usr.Id && bidsList.Select(s => s.Id).Contains(x.BidId)).ToListAsync();
+                    var userFavBids = userFavorites.ToDictionary(x => x.BidId);
+
+                    foreach (var bid in bidsList)
+                    {
+                        GetMyBidResponse response = new GetMyBidResponse
+                        {
+                            Regions = BidRegion.getAllRegionsAsListOfIds(bid.BidRegions),
+
+                            IsOwner = (donor != null && (bid.DonorId == donor.Id)) || (association != null && (bid.AssociationId == association.Id))
+                        };
+                        await GetModelItemForBid(currentEntityUser.Id, bid, response, bid.Association, bid.Donor, userFavorites);
+
+                        response.IsFunded = bid.IsFunded;
+
+                        response.DonorName = bid.BidDonorId.HasValue ? bid.BidDonor.DonorId.HasValue ? bid.BidDonor.Donor.DonorName
+                                              : bid.BidDonor.NewDonorName : "";
+
+                        if (userFavBids.ContainsKey(bid.Id))
+                            response.IsUserFavorite = true;
+                        else
+                            response.IsUserFavorite = false;
+
+                        models.Add(response);
+                    }
+                    return new PagedResponse<List<GetMyBidResponse>>(models, model.pageNumber, model.pageSize, totalRecords);
+                }
+                return new PagedResponse<List<GetMyBidResponse>>(null, model.pageNumber, model.pageSize);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"pageSize = {model.pageSize} & pageNumber = {model.pageNumber}",
+                    ErrorMessage = "Failed to Get Provider Payment Bids!",
+                    ControllerAndAction = "BidController/my-bids"
+                });
+                return new PagedResponse<List<GetMyBidResponse>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private IQueryable<Bid> GetPrivateBidsForCurrentAssociation(long associationId, long entityId)
+        {
+            if (associationId > 0)
+            {
+                return _bidRepository.Find(bid =>
+                !bid.IsDeleted
+                && ( (bid.EntityId == associationId && bid.EntityType == UserType.Association) || bid.SupervisingAssociationId == associationId )
+                && bid.BidTypeId == (int)BidTypes.Private
+                && !( (bid.BidStatusId == (int)TenderStatus.Pending && bid.AssociationId != entityId) || bid.BidStatusId == (int)TenderStatus.Cancelled) 
+                );
+            }
+            return Enumerable.Empty<Bid>().AsQueryable();
+        }
+
+        // Migrated from BidServiceCore
+        private IQueryable<Bid> GetPrivateBidsForCurrentDonor(long donorId, long entityId)
+        {
+            if (donorId > 0)
+            {
+                return _bidRepository.Find(bid => 
+                !bid.IsDeleted
+                && bid.EntityId == donorId
+                && bid.EntityType == UserType.Donor
+                && bid.BidTypeId == (int)BidTypes.Private
+                && !( (bid.BidStatusId == (int)TenderStatus.Pending && bid.BidSupervisingData.Count > 0 && bid.BidSupervisingData.First().DonorId != entityId)
+                        || bid.BidStatusId == (int)TenderStatus.Cancelled)
+                );
+            }
+            return Enumerable.Empty<Bid>().AsQueryable();
+        }
+
+        // Migrated from BidServiceCore
+        private IQueryable<Bid> GetPrivateBidsForSupervisorDonor(long donorId)
+        {
+            if (donorId > 0)
+            {
+                var data = _BidDonorRepository.Find(a =>  a.DonorId == donorId && a.DonorResponse != DonorResponse.Reject)
+                    .Select(a => a.BidId);
+
+                return _bidRepository.Find(a =>  data.Contains(a.Id) && !a.IsDeleted
+                && a.BidTypeId == (int)BidTypes.Private);
+            }
+            return Enumerable.Empty<Bid>().AsQueryable();
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>> GetPublicBidsList(int pageSize, int pageNumber)
+        {
+            try
+            {
+                var bidTypes = await _bidTypeRepository
+                    .Find(b => !b.IsDeleted && b.IsVisible)
+                    .Where(x => x.Id != (int)BidTypes.Freelancing)
+                    .Select(x => x.Id)
+                    .ToListAsync();
+
+                var bids = _bidRepository
+                    .Find(x =>
+                    bidTypes.Contains((int)(x.BidTypeId))
+                    && x.BidStatusId != (int)TenderStatus.Draft
+                    && x.BidStatusId != (int)TenderStatus.Cancelled
+                    && x.BidStatusId != (int)TenderStatus.Reviewing
+                    && !x.IsBidAssignedForAssociationsOnly
+                    && !x.IsBidHidden, false);
+
+                return await HandlePublicBidsQuery(pageSize, pageNumber, bids);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"pageNumber = {pageNumber} & pageSize = {pageSize}",
+                    ErrorMessage = "Failed to Get public bids list!",
+                    ControllerAndAction = "BidController/public-bids-list"
+                });
+                return new PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>> GetPublicFreelancingBidsList(FilterBidsSearchModel request)
+        {
+            try
+            {
+                var user = _currentUserService.CurrentUser;
+                if (user is not null && user.UserType == UserType.Provider)
+                    return new PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>(HttpErrorCode.NotAuthorized, CommonErrorCodes.NotAuthorized);
+
+                var bids = _bidRepository.Find(x => x.BidTypeId == (int)BidTypes.Freelancing
+                    && x.BidStatusId != (int)TenderStatus.Draft
+                    && x.BidStatusId != (int)TenderStatus.Cancelled
+                    && x.BidStatusId != (int)TenderStatus.Reviewing
+                    && !x.IsBidAssignedForAssociationsOnly
+                    && !x.IsBidHidden, false);
+                bids= await ApplyFiltrationForBids(request, bids,getFreelancingBids:true);
+                return await HandlePublicBidsQuery(request.pageSize,request.pageNumber, bids);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = request,
+                    ErrorMessage = "Failed to Get Public Freelancing Bids List!",
+                    ControllerAndAction = "BidController/freelancing-public-bids-list"
+                });
+                return new PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>(HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private IQueryable<Bid> GetRelatedBidsToBidParticipantWorkingSectorsFirstOrder(IQueryable<Bid> bids, Freelancer freelancer, Company company, ApplicationUser user, List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData)
+        {
+            var bidParticipantWorkingSectorsIds = bidParticipantWorkingSectorsMiniData.Select(x => x.Id);
+
+            var bidsRelatedToCompaniesIndustries = bids
+                .WhereIf(user.UserType == UserType.Provider, x => x.Bid_Industries.Any(bi => bidParticipantWorkingSectorsIds.Contains(bi.CommercialSectorsTreeId.Value)) && x.BidStatusId == (int)TenderStatus.Open)
+                .WhereIf(user.UserType == UserType.Freelancer, x => x.FreelanceBidIndustries.Any(bi => bidParticipantWorkingSectorsIds.Contains(bi.FreelanceWorkingSectorId)) && x.BidStatusId == (int)TenderStatus.Open)
+                .Select(x => new { Bid = x, Order = 1 });
+
+            var bidsNotRelatedToCompaniesIndustries = bids
+                .WhereIf(user.UserType == UserType.Provider, x => !(x.Bid_Industries.Any(bi => bidParticipantWorkingSectorsIds.Contains(bi.CommercialSectorsTreeId.Value)) && x.BidStatusId == (int)TenderStatus.Open))
+                .WhereIf(user.UserType == UserType.Freelancer, x => !(x.FreelanceBidIndustries.Any(bi => bidParticipantWorkingSectorsIds.Contains(bi.FreelanceWorkingSectorId)) && x.BidStatusId == (int)TenderStatus.Open))
+                .Select(x => new { Bid = x, Order = 2 });
+
+            bids = bidsRelatedToCompaniesIndustries.Union(bidsNotRelatedToCompaniesIndustries)
+                .OrderBy(x => x.Order)
+                .ThenByDescending(x => x.Bid.CreationDate)
+                .Select(x => x.Bid);
+            return bids;
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>> GetpProviderBids(int pageSize = 10, int pageNumber = 1)
+        {
+            try
+            {
+                var usr = _currentUserService.CurrentUser;
+                if (usr == null || usr.UserType == UserType.Association)
+                {
+                    return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(HttpErrorCode.NotAuthorized, RegistrationErrorCodes.YOU_ARE_NOT_AUTHORIZED);
+                }
+                IQueryable<ProviderBid> providerBids = null;
+                //providerBids = await _providerBidRepository.Find(x => x.Company.Email == usr.Email, false,
+                //   nameof(ProviderBid.Bid)).ToListAsync();
+
+                if (usr.UserType == UserType.Provider)
+                {
+                    if (usr.OrgnizationType == (int)OrganizationType.Comapny)
+                    {
+                        var userCompany = await _companyRepository.FindOneAsync(x => x.Id == usr.CurrentOrgnizationId, false);
+                        if (userCompany != null)
+                        {
+                            providerBids = _providerBidRepository.Find(x => x.CompanyId == userCompany.Id && x.IsPaymentConfirmed, false,
+                        nameof(ProviderBid.Bid), nameof(ProviderBid.Company));
+                        }
+                    }
+                    //var provider = await _providerRepository.FindOneAsync(x => x.Email.ToLower() == usr.Email.ToLower(), false);
+                    //var userCompany = await _companyService.GetProviderCompanies(provider.Id);
+                    //foreach (var item in userCompany)
+                    //{
+                    //    providerBids.AddRange(_providerBidRepository.Find(x => x.CompanyId == item.Id, false).ToList());
+                    //}
+                }
+                else if (usr.UserType == UserType.Company)
+                {
+                    var userCompany = await _companyService.GetUserCompany(usr.Email);
+                    if (userCompany != null)
+                    {
+                        providerBids = _providerBidRepository.Find(x => x.CompanyId == userCompany.Id && x.IsPaymentConfirmed, false,
+                     nameof(ProviderBid.Bid), nameof(ProviderBid.Company));
+                    }
+                }
+                providerBids = providerBids.Include(x => x.Bid).ThenInclude(x => x.Association);
+                providerBids = providerBids.Include(x => x.Bid).ThenInclude(x => x.BidMainClassificationMapping);
+                providerBids = providerBids.Include(x => x.Bid).ThenInclude(x => x.BidAddressesTime);
+                providerBids = providerBids.Include(x => x.Bid).ThenInclude(x => x.BidStatus);
+                providerBids = providerBids.Include(x => x.Bid).ThenInclude(x => x.BidType);
+                if (providerBids.Count() <= 0 || providerBids == null)
+                {
+
+                    //return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(
+                    //       HttpErrorCode.NotFound, CommonErrorCodes.NOT_FOUND);          
+                    return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(
+                           new List<GetProvidersBidsReadOnly>() as IReadOnlyList<GetProvidersBidsReadOnly>, pageNumber, pageSize, 0);
+
+                }
+                int totalRecords = providerBids.Count();
+                //providerBids = providerBids.OrderByDescending(a => a.Bid.CreationDate).Skip((pageNumber - 1) * pageSize).Take(pageSize).ToList();
+                providerBids = providerBids.OrderByDescending(a => a.CreationDate).Skip((pageNumber - 1) * pageSize).Take(pageSize);
+
+                List<GetProvidersBidsReadOnly> models = new List<GetProvidersBidsReadOnly>();
+                foreach (var bid in providerBids)
+                {
+
+                    var bidAddressesTime = await _bidAddressesTimeRepository.FindOneAsync(x => x.BidId == bid.BidId);
+                    int days = 0;
+                    int hour = 0;
+                    if (bidAddressesTime != null && bidAddressesTime.LastDateInOffersSubmission > _dateTimeZone.CurrentDate)
+                    {
+                        var countdwnon = ((DateTime)bidAddressesTime.LastDateInOffersSubmission).Subtract(_dateTimeZone.CurrentDate).TotalHours;
+                        days = (int)(countdwnon / 24);
+
+                        hour = (int)(countdwnon % 24);
+
+                    }
+                    var association = await _bidRepository.FindOneAsync(x => x.Id == bid.BidId, false, nameof(Bid.Association));
+
+                    var paymentBasicData = new PaymentTransactionBasicData { TransactionNumber = bid.TransactionNumber, PaymentMethod = (Nafes.CrossCutting.Model.Enums.PaymentMethod)bid.PaymentMethodId };
+                    var payments = await _helperService.GetPaymentTransaction(new List<PaymentTransactionBasicData> { paymentBasicData });
+                    var transactionNumber = payments.FirstOrDefault();
+
+                    GetProvidersBidsReadOnly model = new GetProvidersBidsReadOnly
+                    {
+                        AssociationLogoResponse = await _imageService.GetFileResponseEncrypted(association.Association.Image, association.Association.ImageFileName),
+                        CompanyLogoResponse = await _imageService.GetFileResponseEncrypted(bid.Company.Image, bid.Company.ImageFileName),
+                        AssociationName = association.Association.Association_Name,
+                        TransactionNumber = transactionNumber == null ? "" : transactionNumber.TranRef,
+                        CreationDate = bid.CreationDate,
+                        Price = bid.Price,
+                        Id = bid.BidId,
+                        Title = bid.Bid.BidName,
+                        CountdownToCompleteDays = days,
+                        CountdownToCompleteHours = hour,
+                        BidModel = _mapper.Map<ReadOnlyFilterBidModel>(bid.Bid)
+                    };
+
+                    models.Add(model);
+                }
+
+                var bidsModels = _mapper.Map<IReadOnlyList<GetProvidersBidsReadOnly>>(models.ToList());
+
+                //bidsModels.ToList().ForEach( async x => x.AssociationLogo = !string.IsNullOrEmpty(x.AssociationLogo) ? fileSettings.BASE_URL + x.AssociationLogo : x.AssociationLogo);
+                //bidsModels.ToList().ForEach(x => x.CompanyLogo = !string.IsNullOrEmpty(x.CompanyLogo) ? fileSettings.BASE_URL + x.CompanyLogo : x.CompanyLogo);
+
+                return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(bidsModels, pageNumber, pageSize, totalRecords);
+            }
+            catch (Exception ex)
+            {
+                string refNo = _logger.Log(new LoggerModel
+                {
+                    ExceptionError = ex,
+                    UserRequestModel = $"pageSize = {pageSize} & pageNumber = {pageNumber}",
+                    ErrorMessage = "Failed to Get Provider Payment Bids!",
+                    ControllerAndAction = "ProviderController/GetProviderPaymentBids"
+                });
+                return new PagedResponse<IReadOnlyList<GetProvidersBidsReadOnly>>(
+                       HttpErrorCode.ServerError, CommonErrorCodes.OPERATION_FAILED, refNo);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task<PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>> HandlePublicBidsQuery(int pageSize, int pageNumber, IQueryable<Bid> bids)
+        {
+            int totalRecords = await bids.CountAsync();
+            if (bids == null || totalRecords == 0)
+                return new PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>(null, pageNumber, pageSize);
+
+            List<Bid> bidsList = await GetBidsList(pageSize, pageNumber, bids);
+
+            var bidsModels = new List<ReadOnlyPublicBidListModel>();
+            await MapBidsModels(bidsList, bidsModels);
+
+            var user = _currentUserService?.CurrentUser;
+            if (user != null)
+                await MapCurrentUserData(bidsModels, user);
+            else
+                bidsModels.ForEach(x => { x.Price = null; x.IsUserFavorite = null; x.hasProviderMatchIndustries = null; });
+
+            return new PagedResponse<IReadOnlyList<ReadOnlyPublicBidListModel>>(bidsModels, pageNumber, pageSize, totalRecords);
+        }
+
+        // Migrated from BidServiceCore
+        private bool IsBidFavoriteByCurrentUser(string userId, long bidId, List<UserFavBidList> userFavorites)
+        {
+            if (string.IsNullOrEmpty(userId))
+                return false;
+
+            var result = userFavorites.Where(x => x.UserId == userId && x.BidId == bidId).FirstOrDefault();
+            return result == null ? false : true;
+        }
+
+        // Migrated from BidServiceCore
+        private async Task MapAllBidsResult(ApplicationUser user, Company company, Association association, Donor donor, Freelancer freelancer, List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData, List<Bid> result, List<GetMyBidResponse> bidsModels)
+        {
+            var bidsIds = bidsModels.Select(a => a.Id);
+            var providerBids = await _providerBidRepository
+                .Find(x => x.IsPaymentConfirmed && bidsIds.Contains(x.BidId))
+                .Select(a => new ProviderBidsBasicData
+                {
+                    BidId = a.BidId,
+                    EntityId = a.CompanyId ?? a.ManualCompanyId ?? a.FreelancerId ?? 0,
+                    UserType = a.UserType,
+                })
+                .ToListAsync();
+
+            await MapBidModelsBasicData(result, bidsModels, bidsIds);
+
+            Dictionary<long, UserFavBidList> userFavBids = new();
+
+            if (user != null)
+                userFavBids = (await _userFavBidList.Find(x => x.UserId == user.Id).ToListAsync()).ToDictionary(x => x.BidId);
+
+            foreach (var itm in bidsModels)
+            {
+                BidDonor bidDonor = null;
+                var bid = result.FirstOrDefault(bid => bid.Id == itm.Id);
+
+                if (bid.BidDonorId.HasValue)
+                {
+                    bidDonor = await _BidDonorRepository
+                        .Find(a => a.Id == bid.BidDonorId, true, false)
+                        .Include(a => a.Donor)
+                        .FirstOrDefaultAsync();
+                }
+
+                if (bid.EntityType == UserType.Association)
+                {
+                    itm.EntityName = bid.Association.Association_Name;
+                    itm.EntityImage = bid.Association.Image;
+                    itm.EntityImageFileName = bid.Association.ImageFileName;
+                }
+                else if (bid.EntityType == UserType.Donor)
+                {
+
+                    itm.EntityName = bid.Donor.DonorName;
+                    itm.EntityImage = bid.Donor.Image;
+                    itm.EntityImageFileName = bid.Donor.ImageFileName;
+                }
+                else
+                    throw new ArgumentException($"This User Type {bid.EntityType.ToString()} not handled here {nameof(BidServiceCore.MapAllBidsResult)}");
+
+                itm.EntityType = bid.AssociationId.HasValue ? UserType.Association : UserType.Donor;
+                itm.EntityId = bid.AssociationId.HasValue ? bid.AssociationId.Value : bid.DonorId.Value;
+                itm.EntityLogoResponse = await _imageService.GetFileResponseEncrypted(itm.EntityImage);
+                itm.EntityImage = null;
+
+                if (user != null)
+                {
+                    if (user.UserType == UserType.Provider || user.UserType == UserType.Freelancer)
+                        itm.hasProviderMatchIndustries = itm.BidMainClassificationId.Any(x => bidParticipantWorkingSectorsMiniData.Any(y => y.ParentId == x.ParentId));
+
+                    itm.IsUserFavorite = userFavBids.ContainsKey(itm.Id);
+
+                    if (user.UserType == UserType.Provider || user.UserType == UserType.Company)
+                        itm.IsBuyCompetitionDocuments = company != null && providerBids.Any(x => x.BidId == itm.Id && x.EntityId == company.Id && x.UserType == UserType.Company) ? true : false;
+
+                    if(user.UserType == UserType.Freelancer)
+                        itm.IsBuyCompetitionDocuments = freelancer != null && providerBids.Any(x => x.BidId == itm.Id && x.EntityId == freelancer.Id && x.UserType == UserType.Freelancer) ? true : false;
+
+                    else if (user.UserType == UserType.Association)
+                    {
+                        itm.IsOwner = (bid.AssociationId.HasValue) && bid.AssociationId == association.Id;
+
+                        itm.DonorName = bid.BidDonorId.HasValue ? association.Id == bid.AssociationId ? bidDonor.Donor == null ?
+                                    bidDonor.NewDonorName : bidDonor.Donor.DonorName : "" : "";
+                    }
+                    else if (user.UserType == UserType.Donor)
+                    {
+                        itm.IsOwner = (bid.DonorId.HasValue) && bid.DonorId == donor.Id;
+
+                        itm.DonorName = (bid.BidDonorId.HasValue && bidDonor.DonorId == donor.Id) ? bidDonor.Donor.DonorName : "";
+                    }
+                    else if (user.UserType == UserType.SuperAdmin || user.UserType == UserType.Admin || user.UserType == UserType.SupportManager || user.UserType == UserType.SupportMember)
+                    {
+                        if (bid.EntityType == UserType.Association)
+                        {
+                            itm.DonorName = bidDonor is not null ? bid.Association.Id == bid.AssociationId ? bidDonor.Donor == null ?
+                                    bidDonor.NewDonorName : bidDonor.Donor.DonorName : "" : "";
+                        }
+                        else if (bid.EntityType == UserType.Donor)
+                        {
+                            var don = bid.Donor;
+                            itm.DonorName = bidDonor is not null ? don.Id == bid.EntityId ? bidDonor.Donor == null ?
+                                    bidDonor.NewDonorName : bidDonor.Donor.DonorName : "" : "";
+                        }
+                    }
+                }
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task MapAllBidsResultForVisitor(List<Bid> result, List<GetMyBidResponse> bidsModels)
+        {
+            foreach (var itm in bidsModels)
+            {
+                var bid = result.FirstOrDefault(bid => bid.Id == itm.Id);
+                if (bid.EntityType == UserType.Association)
+                {
+                    itm.EntityName = bid.Association.Association_Name;
+                    itm.EntityImage = bid.Association.Image;
+                    itm.EntityImageFileName = bid.Association.ImageFileName;
+                }
+                else if (bid.EntityType == UserType.Donor)
+                {
+
+                    itm.EntityName = bid.Donor.DonorName;
+                    itm.EntityImage = bid.Donor.Image;
+                    itm.EntityImageFileName = bid.Donor.ImageFileName;
+                }
+
+                itm.EntityType = bid.AssociationId.HasValue ? UserType.Association : UserType.Donor;
+                itm.EntityId = bid.AssociationId.HasValue ? bid.AssociationId.Value : bid.DonorId.Value;
+                itm.EntityLogoResponse = await _imageService.GetFileResponseEncrypted(itm.EntityImage);
+                itm.EntityImage = null;
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task MapBidModelsBasicData(List<Bid> result, List<GetMyBidResponse> bidsModels, IEnumerable<long> bidsIds)
+        {
+            var bidRegions = await _bidRegionsRepository
+                    .Find(a => bidsIds.Contains(a.BidId), true, false)
+                    .Include(x => x.Region)
+                    .ToListAsync();
+            int regionCount = await _regionRepository.Find(a => true, true, false).CountAsync();
+
+            foreach (var bid in result)
+            {
+                var model = bidsModels.FirstOrDefault(bidMod => bidMod.Id == bid.Id);
+                var currentBidRegions = bidRegions
+                    .Where(a => a.BidId == bid.Id)
+                    .ToList();
+
+                model.Regions = BidRegion.getAllRegionsAsListOfIds(currentBidRegions);
+                model.RegionsNames = currentBidRegions.Select(b => b.Region.NameAr).ToList();
+
+                if (model.RegionsNames.Count == regionCount)
+                {
+                    model.RegionsNames.Clear();
+                    model.RegionsNames.Add(Constants.AllRegionsArabic);
+                }
+
+                var bidWorkingSectors = bid.GetBidWorkingSectors();
+                model.BidMainClassificationId = bidWorkingSectors.Select(a => new BidMainClassificationIds { Id = a.Id, ParentId = a.ParentId }).ToList();
+                model.BidMainClassificationNames = bidWorkingSectors.Select(i => new BidMainClassificationNames { Name = i.NameAr, ParentName = i?.Parent?.NameAr }).ToList();
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task MapBidsModels(List<Bid> bidsList, List<ReadOnlyPublicBidListModel> bidsModels)
+        {
+            int regionCount = await _regionRepository.Find(a => true, true, false).CountAsync();
+            foreach (var bid in bidsList)
+            {
+                var model = new ReadOnlyPublicBidListModel();
+                await MapEntityData(bid, model);
+
+                model.Title = bid.BidName;
+                model.Ref_Number = bid.Ref_Number;
+                model.BidOffersSubmissionTypeId = bid.BidOffersSubmissionTypeId;
+                model.BidStatusId = bid.BidStatusId.Value;
+                model.BidTypeId = bid.BidTypeId;
+                model.BidTypeName = bid.BidType.NameAr;
+                model.Price = bid.Bid_Documents_Price;
+                model.Id = bid.Id;
+                model.LastDateInOffersSubmission = bid.BidAddressesTime?.LastDateInOffersSubmission?.ToString("yyyy-MM-ddTHH:mm:ss");
+                model.Regions = bid.BidRegions.Select(x => x.RegionId).ToList();// BidRegion.getAllRegionsAsListOfIds(bid.BidRegions);
+                model.RegionsNames = bid.BidRegions.Select(b => b.Region.NameAr).ToList();
+                model.IsUserFavorite = false;
+
+                if (model.RegionsNames.Count == regionCount)
+                {
+                    model.RegionsNames.Clear();
+                    model.RegionsNames.Add(Constants.AllRegionsArabic);
+                }
+
+                var bidWorkingSectors = bid.GetBidWorkingSectors();
+
+                model.BidMainClassificationId = bidWorkingSectors.Select(a => new BidMainClassificationIds { Id = a.Id, ParentId = a.ParentId }).ToList();
+                model.BidMainClassificationNames = bidWorkingSectors.Select(i => new BidMainClassificationNames { Name = i.NameAr, ParentName = i?.Parent?.NameAr }).ToList();
+
+                bidsModels.Add(model);
+            }
+        }
+
+        // Migrated from BidServiceCore
+        private async Task MapCurrentUserData(List<ReadOnlyPublicBidListModel> bidsModels, ApplicationUser user)
+        {
+            var userFavBids = (await _userFavBidList.Find(x => x.UserId == user.Id).ToListAsync()).ToDictionary(x => x.BidId);
+            var bidsIds = bidsModels.Select(x => x.Id);
+
+            Company company = null;
+            Freelancer freelancer = null;
+            List<IndustryMiniModel> bidParticipantWorkingSectorsMiniData = new();
+
+            if (user.UserType == UserType.Provider)
+            {
+                company = await _companyRepository.Find(x => x.IsDeleted == false && x.isVerfied == true && x.Id == user.CurrentOrgnizationId, false, nameof(Company.Provider))
+                    .Include(x => x.Company_Industries)
+                        .ThenInclude(x => x.CommercialSectorsTree)
+                    .FirstOrDefaultAsync();
+
+                if (company is not null)
+                    bidParticipantWorkingSectorsMiniData = company.Company_Industries.Where(x => x.CommercialSectorsTreeId.HasValue).Select(x => new IndustryMiniModel { Id = x.CommercialSectorsTreeId.Value, ParentId = x.CommercialSectorsTree.ParentId }).ToList();
+            }
+            else if (user.UserType == UserType.Freelancer)
+            {
+                freelancer = await _freelancerRepository.Find(x => x.IsVerified && x.Id == user.CurrentOrgnizationId)
+                    .Include(x => x.FreelancerWorkingSectors)
+                        .ThenInclude(x => x.FreelanceWorkingSector)
+                    .FirstOrDefaultAsync();
+
+                if (freelancer is not null)
+                    bidParticipantWorkingSectorsMiniData = freelancer.FreelancerWorkingSectors.Select(x => new IndustryMiniModel { Id = x.FreelanceWorkingSectorId, ParentId = x.FreelanceWorkingSector.ParentId }).ToList();
+            }
+
+
+            foreach (var itm in bidsModels)
+            {
+                if (user.UserType == UserType.Provider || user.UserType == UserType.Freelancer)
+                    itm.hasProviderMatchIndustries = itm.BidMainClassificationId.Any(x => bidParticipantWorkingSectorsMiniData.Any(y => y.ParentId == x.ParentId));
+
+                if (userFavBids.ContainsKey(itm.Id))
+                    itm.IsUserFavorite = true;
+                else
+                    itm.IsUserFavorite = false;
+            }            
+        }
+
+        // Migrated from BidServiceCore
+        private async Task MapEntityData(Bid bid, ReadOnlyPublicBidListModel model)
+        {
+            //var user = _currentUserService?.CurrentUser;
+            //if (user != null)
+            //{
+            if (bid.EntityType == UserType.Association)
+            {
+                model.EntityImage = await _imageService.GetFileResponseEncrypted(bid.Association.Image, bid.Association.ImageFileName);
+                model.EntityName = bid.Association.Association_Name;
+                model.EntityType = bid.EntityType;
+                model.EntityId = bid.EntityId;
+            }
+            else if (bid.EntityType == UserType.Donor)
+            {
+
+                model.EntityImage = await _imageService.GetFileResponseEncrypted(bid.Donor.Image, bid.Donor.ImageFileName);
+                model.EntityName = bid.Donor.DonorName;
+                model.EntityType = bid.EntityType;
+                model.EntityId = bid.EntityId;
+                //}
+            }
+        }
